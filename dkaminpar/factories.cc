@@ -122,6 +122,9 @@ create_global_clustering_algorithm(const Context &ctx) {
 
   case GlobalClusteringAlgorithm::HEM_LP:
     return std::make_unique<HEMLPClustering>(ctx);
+
+  case GlobalClusteringAlgorithm::MY_LP:
+    return std::make_unique<MyLPClustering>(ctx);
   }
 
   __builtin_unreachable();

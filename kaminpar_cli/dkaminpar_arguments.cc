@@ -360,7 +360,8 @@ CLI::Option_group *create_coarsening_options(CLI::App *app, Context &ctx) {
   - active-set-lp:  parallel label propagation with active set strategy
   - locking-lp:     parallel label propagation with cluster-join requests
   - hem:            heavy edge matching
-  - hem-lp:         heavy edge matching + label propagation)")
+  - hem-lp:         heavy edge matching + label propagation
+  - my-lp:          simple label propagation algorithm with no special assertions)")
 
       ->capture_default_str();
   coarsening->add_option("--c-contraction-algorithm", ctx.coarsening.contraction_algorithm)
