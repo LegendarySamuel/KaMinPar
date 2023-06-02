@@ -2,11 +2,12 @@
 
 namespace kaminpar::dist {
     MyLPClustering::~MyLPClustering() = default;
-    void initialize(const DistributedGraph &graph) {
+
+    void MyLPClustering::initialize(const DistributedGraph &graph) {
         // TODO 
     }
 
-    MyLPClustering::ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
+    MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // TODO
     }
 }
