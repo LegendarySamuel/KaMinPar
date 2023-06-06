@@ -69,9 +69,16 @@ namespace kaminpar::dist {
             }
         }
 
-        // TODO check for maxEdgeWeigth cluster
-        // TODO return new clusterID
+        // check for maxEdgeWeigth cluster
+        std::pair<ClusterID, EdgeWeight> max = std::make_pair(0, 0);
+        for (auto&& pair : sums) {
+            if (pair.second > max.second) {
+                max = pair;
+            }
+        }
 
+        // return new clusterID
+        return max.first;
     }
 
     ///////////////////////////////////////////////////////////////////////////////
