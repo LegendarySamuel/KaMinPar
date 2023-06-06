@@ -22,7 +22,22 @@ namespace kaminpar::dist {
         return eps * (graph.global_total_node_weight() / number_of_clusters(blocks, contractionLimit, graph));
     }
 
-    GlobalNodeID calculate_new_cluster(NodeID node, const DistributedGraph &graph, MyLPClustering::ClusterArray clusters) {
+    bool is_overweight(std::vector<std::pair<GlobalNodeID, NodeWeight>> clusterWeight, const GlobalNodeID c_id, 
+                        const NodeID n_id, const DistributedGraph &graph, double max_weight) {
+        for (auto&& [cluster, weight] : clusterWeight) {
+            if (cluster == c_id) {
+                if (weight + graph.node_weight(n_id) > max_weight) {
+                    return true;
+                } else {
+                    break;
+                }
+            }
+        }
+        return false;
+    }
+
+    GlobalNodeID calculate_new_cluster(NodeID node, const DistributedGraph &graph, MyLPClustering::ClusterArray clusters, 
+                                        std::vector<std::pair<GlobalNodeID, NodeWeight>> clusterWeight, double max_weight) {
         /* find adjacent nodes
          * calculate cluster with maximum intra cluster edge weight
          * check weight of new edges and sum them up if in the same cluster, 
@@ -30,23 +45,21 @@ namespace kaminpar::dist {
          * make sure max cluster weight constraint is not violated
          * if best cluster is too heavy, choose next lighter one
          */
-        typedef std::pair<GlobalNodeID, EdgeWeight> clusterWeight;
-        std::vector<clusterWeight> sums(0);
+        using ClusterID = GlobalNodeID;
+        typedef std::pair<ClusterID, EdgeWeight> clusterEdgeWeight;
+        std::vector<clusterEdgeWeight> sums(0);
 
         for (auto&& edgeID : graph.incident_edges(node)) {
             NodeID target = graph.edge_target(edgeID);
             EdgeWeight eweight = graph.edge_weight(edgeID);            
-            GlobalNodeID clusterID = 0;
+            ClusterID clusterID = clusters[target];
 
-            if (graph.is_ghost_node(target)) {
-                graph.ghost_owner(target);
-                // TODO get clusterID from ghost owner (label)
-                // TODO set clusterID
-            } else {
-                clusterID = clusters[target];
+            // skip this cluster if it would be overweight
+            if (is_overweight(clusterWeight, clusterID, target, graph, max_weight)) {
+                break;
             }
 
-            std::unordered_map<GlobalNodeID, EdgeWeight> sums;
+            std::unordered_map<ClusterID, EdgeWeight> sums;
             if (sums.find(clusterID) != sums.end()) {    // cluster is already represented in sums
                 EdgeWeight temp = sums[clusterID] + eweight;
                 sums.erase(clusterID);
@@ -56,13 +69,7 @@ namespace kaminpar::dist {
             }
         }
 
-        std::vector<clusterWeight> order(0);
-        for (auto&& pair : sums)  {
-            order.push_back(pair);
-        }
-
-        // TODO order vector by weight
-        // TODO check for constraint
+        // TODO check for maxEdgeWeigth cluster
         // TODO return new clusterID
 
     }
@@ -82,13 +89,23 @@ namespace kaminpar::dist {
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // TODO
-        MyLPClustering::ClusterArray clusters(graph.n());
-        typedef MyLPClustering::ClusterArray::iterator iter;
+        using ClusterID = GlobalNodeID;
+
+        // clusterIDs of the vertices
+        MyLPClustering::ClusterArray clusters(graph.total_n());
+
+        // cluster weights of the clusters
+        typedef std::pair<ClusterID, NodeWeight> clusterNodeWeight;
+        std::vector<clusterNodeWeight> clusterWeight(graph.total_n());
+
+        // TODO vectors for PEs (depending on mpi::size allocate space)
         
-        GlobalNodeID node = graph.offset_n();
-        for (iter it = clusters.begin(); it != clusters.end(); it++) {
-            clusters.push_back(node);
-            node++;
+        // initialize containers and 
+        // TODO set up the send buffers if necessary
+        for (NodeID u : graph.all_nodes()) {
+            GlobalNodeID g_id = graph.local_to_global_node(u);
+            clusters[u] = g_id;
+            clusterWeight[u] = std::make_pair(g_id, graph.node_weight(u));
         }
 
         mpi::barrier(graph.communicator());
@@ -99,6 +116,6 @@ namespace kaminpar::dist {
         int end = rank*nOP + (graph.n()/nOP);
         */
 
-        // TODO communicate labels
+        // TODO communicate labels ()
     }
 }
