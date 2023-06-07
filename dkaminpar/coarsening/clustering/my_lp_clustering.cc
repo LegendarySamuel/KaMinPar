@@ -161,7 +161,10 @@ namespace kaminpar::dist {
         typedef std::pair<NodeID, ClusterID> cluster_update;
         std::unordered_map<PEID, std::vector<cluster_update>> send_buffers;
 
-        // vectors for PEs (depending on mpi::size allocate space)
+        // receive buffer
+        std::vector<cluster_update> recv_buffer();
+
+        // vectors for PEs
         for (auto&& [peid, _] : adj_PEs) {
             std::vector<cluster_update> *temp = new std::vector<cluster_update>();
             send_buffers.insert(std::make_pair(peid, *temp));
@@ -183,7 +186,7 @@ namespace kaminpar::dist {
         }
 
         // TODO communicate labels ()
-
+        
         mpi::barrier(graph.communicator());
         
 
