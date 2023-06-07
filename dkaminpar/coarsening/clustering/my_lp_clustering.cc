@@ -36,14 +36,14 @@ namespace kaminpar::dist {
         return false;
     }
 
+    /* calculates the best cluster to put a node into; does not do anything related to global communication */
     GlobalNodeID calculate_new_cluster(NodeID node, const DistributedGraph &graph, MyLPClustering::ClusterArray clusters, 
                                         std::vector<std::pair<GlobalNodeID, NodeWeight>> clusterWeight, double max_weight) {
         /* find adjacent nodes
          * calculate cluster with maximum intra cluster edge weight
-         * check weight of new edges and sum them up if in the same cluster, 
+         * check weight of "new" edges and sum them up if in the same cluster, 
          * then choose cluster with the highest gain in weight
          * make sure max cluster weight constraint is not violated
-         * if best cluster is too heavy, choose next lighter one
          */
         using ClusterID = GlobalNodeID;
         typedef std::pair<ClusterID, EdgeWeight> clusterEdgeWeight;
@@ -92,6 +92,7 @@ namespace kaminpar::dist {
      * 1.) initialize clusters with single nodes
      * 2.) for each node maximize intra cluster edge weight by moving node to adjacent cluster without exceeding max cluster weight
      * (have to check for all nodes at the edges of clusters, not only for interface nodes)
+     * if cluster is the same, do not communicate
      * 3.) put all isolated nodes in one cluster
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
@@ -124,5 +125,8 @@ namespace kaminpar::dist {
         */
 
         // TODO communicate labels ()
+
+
+        // TODO calculate new cluster assignments, do not communicate if node stays in the same cluster
     }
 }
