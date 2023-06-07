@@ -110,8 +110,13 @@ namespace kaminpar::dist {
         return ghost_PEs;
     }
 
-    void fill_send_buffers(NodeID u, std::unordered_map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
-        // TODO
+    /* fills the appropriate send_buffers for Node u
+     * this method is called after an update has been made to the cluster assignment of Node u
+     */
+    void fill_send_buffers(NodeID u, MyLPClustering::ClusterArray clusters, std::unordered_map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
+        for (PEID pe : ghost_neighbors(u, graph)) {
+            send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
+        }
     }
 
     ///////////////////////////////////////////////////////////////////////////////
@@ -173,9 +178,7 @@ namespace kaminpar::dist {
 
         // fill send buffers initally
         for (NodeID u : graph.nodes()) {
-            for (PEID pe : ghost_neighbors(u, graph)) {
-                send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
-            }
+            fill_send_buffers(u, clusters, send_buffers, graph);
         }
 
         // TODO communicate labels ()
