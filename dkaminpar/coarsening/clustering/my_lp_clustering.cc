@@ -81,6 +81,42 @@ namespace kaminpar::dist {
         return max.first;
     }
 
+    // find out whether an item is contained within a vector, needs "==" operator
+    template<typename T>
+    bool contains(std::vector<T> vec, T item) {
+        for (auto&& element : vec) {
+            if (item == element) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // used to find the PEs that have to be notified of a label update to u
+    std::vector<PEID> ghost_neighbors(NodeID u, const DistributedGraph &graph) {
+        std::vector<PEID> ghost_PEs = std::vector<PEID>();
+        for (auto&& [e, target] : graph.neighbors(u)) {
+            if (graph.is_ghost_node(target)) {
+                int peid = graph.ghost_owner(target);
+                if (!contains(ghost_PEs, peid)) {
+                    ghost_PEs.push_back(peid);
+                }
+            }
+        }
+        return ghost_PEs;
+    }
+
+    /* used once in the beginning, to find all nodes adjacent to a ghost node, in order to send an update,
+     * since this should be more efficient
+     */
+    std::vector<NodeID> relevant_nodes(NodeID g, const DistributedGraph &graph) {
+        std::vector<NodeID> nodes = std::vector<NodeID>();
+        for (auto&& [e, target] : graph.neighbors(g)) {
+            nodes.push_back(target);
+        }
+        return nodes;
+    }
+
     ///////////////////////////////////////////////////////////////////////////////
 
     void MyLPClustering::initialize(const DistributedGraph &graph) {
@@ -106,27 +142,55 @@ namespace kaminpar::dist {
         typedef std::pair<ClusterID, NodeWeight> clusterNodeWeight;
         std::vector<clusterNodeWeight> clusterWeight(graph.total_n());
 
-        // TODO vectors for PEs (depending on mpi::size allocate space)
+        // MPI rank and size
+        int rank = mpi::get_comm_rank(graph.communicator());
+        int size = mpi::get_comm_size(graph.communicator());
+
+        // adjacent PEs (put in hashmap to ensure uniqueness of PEs)
+        std::unordered_map<PEID, PEID> adj_PEs;
+
+        // find all adjacent PEs
+        for (NodeID u : graph.all_nodes()) {
+            if (graph.is_ghost_node(u)) {
+                int pe = graph.ghost_owner(u);
+                adj_PEs.insert(std::make_pair(pe,pe));
+            }
+        }
+
+        // send buffers to PEs
+        typedef std::pair<NodeID, ClusterID> cluster_update;
+        std::unordered_map<PEID, std::vector<cluster_update>> send_buffers;
+
+        // vectors for PEs (depending on mpi::size allocate space)
+        for (auto&& [peid, _] : adj_PEs) {
+            std::vector<cluster_update> *temp = new std::vector<cluster_update>();
+            send_buffers.insert(std::make_pair(peid, *temp));
+        }
         
-        // initialize containers and 
-        // TODO set up the send buffers if necessary
+        // initialize containers for local clusterIDs and cluster weights
         for (NodeID u : graph.all_nodes()) {
             GlobalNodeID g_id = graph.local_to_global_node(u);
             clusters[u] = g_id;
             clusterWeight[u] = std::make_pair(g_id, graph.node_weight(u));
         }
 
-        mpi::barrier(graph.communicator());
-        
-        /*int rank = mpi::get_comm_rank(graph.communicator());
-        int nOP = mpi::get_comm_size(graph.communicator());
-        int begin = rank*nOP;
-        int end = rank*nOP + (graph.n()/nOP);
-        */
+        // fill send buffers initally
+        for (NodeID g : graph.ghost_nodes()) {
+            PEID pe = graph.ghost_owner(g);
+            for (NodeID u : relevant_nodes(g, graph)) {
+                send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
+            }
+        }
 
         // TODO communicate labels ()
 
+        mpi::barrier(graph.communicator());
+        
 
+        int begin = rank*size;
+        int end = rank*size + (graph.n()/size);
+        
+        ///////////////// maybe not TODO if ghost_neighbors is not empty put in sendbuffer
         // TODO calculate new cluster assignments, do not communicate if node stays in the same cluster
     }
 }
