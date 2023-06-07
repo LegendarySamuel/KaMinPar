@@ -8,6 +8,12 @@
 # include <unordered_map>
 
 namespace kaminpar::dist {
+    using ClusterID = GlobalNodeID;
+    using clusterNodeWeight = std::pair<ClusterID, NodeWeight>;
+    using clusterEdgeWeight = std::pair<ClusterID, EdgeWeight>;
+    using cluster_update = std::pair<NodeID, GlobalNodeID>;
+    using update_vector = std::vector<cluster_update>;
+
     MyLPClustering::~MyLPClustering() = default;
 
     /////////////////////////////////////////////////////////////////////////////// helpers
@@ -22,7 +28,7 @@ namespace kaminpar::dist {
         return eps * (graph.global_total_node_weight() / number_of_clusters(blocks, contractionLimit, graph));
     }
 
-    bool is_overweight(std::vector<std::pair<GlobalNodeID, NodeWeight>> clusterWeight, const GlobalNodeID c_id, 
+    bool is_overweight(std::vector<std::pair<ClusterID, NodeWeight>> clusterWeight, const ClusterID c_id, 
                         const NodeID n_id, const DistributedGraph &graph, double max_weight) {
         for (auto&& [cluster, weight] : clusterWeight) {
             if (cluster == c_id) {
@@ -38,15 +44,13 @@ namespace kaminpar::dist {
 
     /* calculates the best cluster to put a node into; does not do anything related to global communication */
     GlobalNodeID calculate_new_cluster(NodeID node, const DistributedGraph &graph, MyLPClustering::ClusterArray clusters, 
-                                        std::vector<std::pair<GlobalNodeID, NodeWeight>> clusterWeight, double max_weight) {
+                                        std::vector<clusterNodeWeight> clusterWeight, double max_weight) {
         /* find adjacent nodes
          * calculate cluster with maximum intra cluster edge weight
          * check weight of "new" edges and sum them up if in the same cluster, 
          * then choose cluster with the highest gain in weight
          * make sure max cluster weight constraint is not violated
          */
-        using ClusterID = GlobalNodeID;
-        typedef std::pair<ClusterID, EdgeWeight> clusterEdgeWeight;
         std::vector<clusterEdgeWeight> sums(0);
 
         for (auto&& edgeID : graph.incident_edges(node)) {
@@ -106,15 +110,8 @@ namespace kaminpar::dist {
         return ghost_PEs;
     }
 
-    /* used once in the beginning, to find all nodes adjacent to a ghost node, in order to send an update,
-     * since this should be more efficient
-     */
-    std::vector<NodeID> relevant_nodes(NodeID g, const DistributedGraph &graph) {
-        std::vector<NodeID> nodes = std::vector<NodeID>();
-        for (auto&& [e, target] : graph.neighbors(g)) {
-            nodes.push_back(target);
-        }
-        return nodes;
+    void fill_send_buffers(NodeID u, std::unordered_map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
+        // TODO
     }
 
     ///////////////////////////////////////////////////////////////////////////////
@@ -133,13 +130,11 @@ namespace kaminpar::dist {
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // TODO
-        using ClusterID = GlobalNodeID;
 
         // clusterIDs of the vertices
         MyLPClustering::ClusterArray clusters(graph.total_n());
 
         // cluster weights of the clusters
-        typedef std::pair<ClusterID, NodeWeight> clusterNodeWeight;
         std::vector<clusterNodeWeight> clusterWeight(graph.total_n());
 
         // MPI rank and size
@@ -158,15 +153,14 @@ namespace kaminpar::dist {
         }
 
         // send buffers to PEs
-        typedef std::pair<NodeID, ClusterID> cluster_update;
-        std::unordered_map<PEID, std::vector<cluster_update>> send_buffers;
+        std::unordered_map<PEID, update_vector> send_buffers;
 
         // receive buffer
-        std::vector<cluster_update> recv_buffer();
+        update_vector recv_buffer();
 
         // vectors for PEs
         for (auto&& [peid, _] : adj_PEs) {
-            std::vector<cluster_update> *temp = new std::vector<cluster_update>();
+            update_vector *temp = new update_vector();
             send_buffers.insert(std::make_pair(peid, *temp));
         }
         
@@ -178,9 +172,8 @@ namespace kaminpar::dist {
         }
 
         // fill send buffers initally
-        for (NodeID g : graph.ghost_nodes()) {
-            PEID pe = graph.ghost_owner(g);
-            for (NodeID u : relevant_nodes(g, graph)) {
+        for (NodeID u : graph.nodes()) {
+            for (PEID pe : ghost_neighbors(u, graph)) {
                 send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
             }
         }
