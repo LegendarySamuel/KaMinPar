@@ -14,7 +14,7 @@ namespace kaminpar::dist {
     using ClusterID = GlobalNodeID;
     using clusterNodeWeight = std::pair<ClusterID, NodeWeight>;
     using clusterEdgeWeight = std::pair<ClusterID, EdgeWeight>;
-    using cluster_update = std::pair<NodeID, GlobalNodeID>;
+    using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
 
     MyLPClustering::~MyLPClustering() = default;
@@ -165,6 +165,15 @@ namespace kaminpar::dist {
     }
 
     /**
+     * Evaluates and processes the contents of the recv_buffer.
+    */
+    void evaluate_recv_buffer(update_vector &recv_buffer, MyLPClustering::ClusterArray &clusters) {
+        for (auto&& [nodeID, clusterID] : recv_buffer) {
+            clusters[nodeID] = clusterID;
+        }
+    }
+
+    /**
      * Cleans up the label communication containers after one iteration.
     */
     void clean_up_iteration(std::map<PEID, update_vector> &send_buffers, update_vector &send_buffer, int* send_counts, int* send_displ, 
@@ -247,7 +256,7 @@ namespace kaminpar::dist {
         
         // initialize containers for local clusterIDs and cluster weights
         for (NodeID u : graph.all_nodes()) {
-            GlobalNodeID g_id = graph.local_to_global_node(u);
+            ClusterID g_id = graph.local_to_global_node(u);
             clusters[u] = g_id;
             clusterWeight[u] = std::make_pair(g_id, graph.node_weight(u));
         }
@@ -266,8 +275,10 @@ namespace kaminpar::dist {
         MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
 
         mpi::barrier(graph.communicator());
-        // TODO evaluate recv_buffer content
-        
+        // evaluate recv_buffer content
+        evaluate_recv_buffer(*recv_buffer, clusters);
+
+        // clean up containers
         clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
 
         // TODO calculate new cluster assignments, do not communicate if node stays in the same cluster
@@ -281,7 +292,10 @@ namespace kaminpar::dist {
             MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
 
             mpi::barrier(graph.communicator());
-            // TODO evaluate recv_buffer content
+            // evaluate recv_buffer content
+            evaluate_recv_buffer(*recv_buffer, clusters);
+
+            // clean up containers
             clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
         }
     }
