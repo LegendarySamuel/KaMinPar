@@ -6,6 +6,7 @@ namespace kaminpar::dist {
 class MyLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
 
 public:
+  explicit MyLPClustering(const Context &ctx);
   using ClusterArray = NoinitVector<GlobalNodeID>;
 
   ~MyLPClustering() override;

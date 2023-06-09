@@ -11,6 +11,8 @@
 # include "mpi.h"
 
 namespace kaminpar::dist {
+    MyLPClustering::MyLPClustering(const Context &ctx) {}
+
     using ClusterID = GlobalNodeID;
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
