@@ -192,12 +192,12 @@ namespace kaminpar::dist {
         // send buffers to PEs
         send_buffers.clear();
         send_buffer.clear();
-        send_counts = {NULL};
+        send_counts = {0};
         send_displ = {0};
 
         // receive buffer
         recv_buffer.clear();
-        recv_counts = {NULL};
+        recv_counts = {0};
         recv_displ = {0};
     }
 
@@ -278,7 +278,7 @@ namespace kaminpar::dist {
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // clusterIDs of the vertices
-        MyLPClustering::ClusterArray clusters(graph.total_n());
+        MyLPClustering::ClusterArray clusters = *(new MyLPClustering::ClusterArray(graph.total_n()));
 
         // cluster weights of the clusters
         std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
@@ -302,12 +302,12 @@ namespace kaminpar::dist {
         // send buffers to PEs
         std::map<PEID, update_vector> send_buffers;
         update_vector *send_buffer = new update_vector();
-        int send_counts[size] = {NULL};
+        int send_counts[size] = {0};
         int send_displ[size] = {0};
 
         // receive buffer
         update_vector *recv_buffer = new update_vector();
-        int recv_counts[size] = {NULL};
+        int recv_counts[size] = {0};
         int recv_displ[size] = {0};
 
         // vectors for PEs

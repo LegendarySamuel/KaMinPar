@@ -37,6 +37,7 @@
 #include "dkaminpar/coarsening/clustering/hem_lp_clustering.h"
 #include "dkaminpar/coarsening/clustering/local_lp_clustering.h"
 #include "dkaminpar/coarsening/clustering/noop_clustering.h"
+#include "dkaminpar/coarsening/clustering/my_lp_clustering.h"
 
 namespace kaminpar::dist::factory {
 std::unique_ptr<Partitioner> create_partitioner(const Context &ctx, const DistributedGraph &graph) {
