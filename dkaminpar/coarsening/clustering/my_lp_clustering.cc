@@ -190,12 +190,44 @@ namespace kaminpar::dist {
     }
 
     /**
+     * Changes the cluster assignment of the current node.
      * Adjusts the edge and node weights of the clusters.
+     * If a cluster is left empty, it is removed.
     */
-    void adjust_weights(const DistributedGraph &graph, NodeID node, ClusterID old_id, ClusterID new_id, 
-                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight) {
-        // TODO if cluster_node_weight == 0, remove cluster from lists
+    void adjust_clusters(const DistributedGraph &graph, NodeID node, ClusterID old_id, ClusterID new_id, 
+                        MyLPClustering::ClusterArray &clusters,
+                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
+                        std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight) {
+        // temporary weights to calculate the weight differences
+        EdgeWeight old_delta = 0;
+        EdgeWeight new_delta = 0;
 
+        // calculate weight differences
+        for (auto&& [e_id, target] : graph.neighbors(node)) {
+            if (clusters[target] == old_id) {
+                old_delta+=graph.edge_weight(e_id);
+            } else if (clusters[target] == new_id) {
+                new_delta+=graph.edge_weight(e_id);
+            }
+        }
+
+        // adjust weights
+        NodeWeight node_weight = graph.node_weight(node);
+        if (cluster_node_weight[old_id]-node_weight == 0) { // remove weights for empty cluster
+            cluster_node_weight.erase(old_id);
+            cluster_edge_weight.erase(old_id);
+            cluster_node_weight[new_id]+=node_weight;
+            cluster_edge_weight[new_id]+=new_delta;
+        } else {
+            cluster_node_weight[old_id]-=node_weight;
+            cluster_edge_weight[old_id]-=old_delta; 
+            cluster_node_weight[new_id]+=node_weight;
+            cluster_edge_weight[new_id]+=new_delta;
+        }
+
+
+        // set new clusterID
+        clusters[node] = new_id;
     }
 
     /**
@@ -214,7 +246,7 @@ namespace kaminpar::dist {
             ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, maximum_cluster_weight(graph));
             if (cl_id != clusters[node]) {
                 // TODO adjust weights
-                clusters[node] = cl_id;
+                adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, cluster_edge_weight);
                 fill_send_buffers(node, clusters, send_buffers, graph);
             }
         }
