@@ -118,7 +118,19 @@ namespace kaminpar::dist {
     void fill_send_buffers(NodeID u, const MyLPClustering::ClusterArray clusters, std::map<PEID, update_vector> &send_buffers, 
                             const DistributedGraph &graph) {
         for (PEID pe : ghost_neighbors(u, graph)) {
-            send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
+            // update a label, if it has been changed before without being sent
+            bool contained = false;
+            for (auto&& update : send_buffers[pe]) {
+                if (update.first == u) {
+                    update.second = clusters[u];
+                    contained = true;
+                    break;
+                }
+            }
+            // add update to send_buffer if the node has not been reassigned yet
+            if (!contained) {
+                send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
+            }
         }
     }
 
@@ -239,13 +251,10 @@ namespace kaminpar::dist {
                                 std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
                                 std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
                                 std::map<PEID, update_vector> &send_buffers) {
-        // TODO one iteration (calculate cluster assignment for each node, fill send buffers if necessary)
-        // calculate_new_cluster
-        send_buffers;
+        // calculate_new_cluster for all owned nodes
         for (auto&& node : graph.nodes()) {
             ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, maximum_cluster_weight(graph));
             if (cl_id != clusters[node]) {
-                // TODO adjust weights
                 adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, cluster_edge_weight);
                 fill_send_buffers(node, clusters, send_buffers, graph);
             }
@@ -268,8 +277,6 @@ namespace kaminpar::dist {
      * 3.) put all isolated nodes in one cluster
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
-        // TODO
-
         // clusterIDs of the vertices
         MyLPClustering::ClusterArray clusters(graph.total_n());
 
@@ -336,11 +343,14 @@ namespace kaminpar::dist {
         // clean up containers
         clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
 
-        // TODO calculate new cluster assignments, do not communicate if node stays in the same cluster
-        int iterations = 10;
-        for (int i = 0; i < iterations; i++) {
-            // TODO add cluster_iteration() arguments
-            // cluster_iteration();
+        // global cluster iterations
+        int global_iterations = 5;
+        int local_iterations = 3;
+        for (int i = 0; i < global_iterations; i++) {
+            // local cluster iterations
+            for (int y = 0; y < local_iterations; y++) {
+                cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers);
+            }
 
             // communicate labels
             set_up_alltoallv_send(send_buffers, *send_buffer, send_counts, send_displ);
