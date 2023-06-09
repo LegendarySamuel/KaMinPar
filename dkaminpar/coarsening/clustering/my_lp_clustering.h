@@ -10,8 +10,8 @@ public:
 
   ~MyLPClustering() override;
 
-  void initialize(const DistributedGraph &graph) = 0;
+  void initialize(const DistributedGraph &graph);
 
-  ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) = 0;
+  ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight);
 };
 }

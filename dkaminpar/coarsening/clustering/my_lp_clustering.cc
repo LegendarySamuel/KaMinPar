@@ -15,6 +15,8 @@ namespace kaminpar::dist {
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
 
+    MyLPClustering::ClusterArray clusters;
+
     MyLPClustering::~MyLPClustering() = default;
 
     /////////////////////////////////////////////////////////////////////////////// helpers
@@ -278,7 +280,7 @@ namespace kaminpar::dist {
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // clusterIDs of the vertices
-        MyLPClustering::ClusterArray clusters = *(new MyLPClustering::ClusterArray(graph.total_n()));
+        clusters = *(new MyLPClustering::ClusterArray(graph.total_n()));
 
         // cluster weights of the clusters
         std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
