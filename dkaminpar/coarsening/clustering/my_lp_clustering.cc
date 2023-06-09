@@ -22,22 +22,12 @@ namespace kaminpar::dist {
     MyLPClustering::~MyLPClustering() = default;
 
     /////////////////////////////////////////////////////////////////////////////// helpers
-    double number_of_clusters(const DistributedGraph &graph, double blocks = 4, double contractionLimit = 1024) {
-        return std::min(blocks, graph.total_n()/contractionLimit);
-    }
-
-    double maximum_cluster_weight(const DistributedGraph &graph, double blocks = 4, double contractionLimit = 1024) {
-        std::srand(std::time(NULL));
-        int rand = std::rand() % 100000;
-        int eps = rand / 100000000000.0;
-        return eps * (graph.global_total_node_weight() / number_of_clusters(graph, blocks, contractionLimit));
-    }
 
     bool is_overweight(const std::unordered_map<ClusterID, NodeWeight> cluster_node_weight, const ClusterID c_id, 
-                        const NodeID n_id, const DistributedGraph &graph, double max_weight) {
+                        const NodeID n_id, const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         for (auto&& [cluster, weight] : cluster_node_weight) {
             if (cluster == c_id) {
-                if (weight + graph.node_weight(n_id) > max_weight) {
+                if (weight + graph.node_weight(n_id) > max_cluster_weight) {
                     return true;
                 } else {
                     break;
@@ -49,7 +39,7 @@ namespace kaminpar::dist {
 
     /** calculates the best cluster to put a node into; does not do anything related to global communication */
     ClusterID calculate_new_cluster(NodeID node, const DistributedGraph &graph, const MyLPClustering::ClusterArray &clusters, 
-                                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, double max_weight) {
+                                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, GlobalNodeWeight max_cluster_weight) {
         /* find adjacent nodes
          * calculate cluster with maximum intra cluster edge weight
          * check weight of "new" edges and sum them up if in the same cluster, 
@@ -65,7 +55,7 @@ namespace kaminpar::dist {
             ClusterID clusterID = clusters[target];
 
             // skip this cluster if it would be overweight
-            if (is_overweight(cluster_node_weight, clusterID, target, graph, max_weight)) {
+            if (is_overweight(cluster_node_weight, clusterID, target, graph, max_cluster_weight)) {
                 break;
             }
 
@@ -254,10 +244,11 @@ namespace kaminpar::dist {
     void cluster_iteration(const DistributedGraph &graph, MyLPClustering::ClusterArray &clusters, 
                                 std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
                                 std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
-                                std::map<PEID, update_vector> &send_buffers) {
+                                std::map<PEID, update_vector> &send_buffers, 
+                                GlobalNodeWeight max_cluster_weight) {
         // calculate_new_cluster for all owned nodes
         for (auto&& node : graph.nodes()) {
-            ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, maximum_cluster_weight(graph));
+            ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, max_cluster_weight);
             if (cl_id != clusters[node]) {
                 adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, cluster_edge_weight);
                 fill_send_buffers(node, clusters, send_buffers, graph);
@@ -353,7 +344,7 @@ namespace kaminpar::dist {
         for (int i = 0; i < global_iterations; i++) {
             // local cluster iterations
             for (int y = 0; y < local_iterations; y++) {
-                cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers);
+                cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
             }
 
             // communicate labels
