@@ -12,28 +12,26 @@
 
 namespace kaminpar::dist {
     using ClusterID = GlobalNodeID;
-    using clusterNodeWeight = std::pair<ClusterID, NodeWeight>;
-    using clusterEdgeWeight = std::pair<ClusterID, EdgeWeight>;
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
 
     MyLPClustering::~MyLPClustering() = default;
 
     /////////////////////////////////////////////////////////////////////////////// helpers
-    double number_of_clusters(double blocks = 4, double contractionLimit = 1024, const DistributedGraph &graph) {
+    double number_of_clusters(const DistributedGraph &graph, double blocks = 4, double contractionLimit = 1024) {
         return std::min(blocks, graph.total_n()/contractionLimit);
     }
 
-    double maximum_cluster_weight(double blocks = 4, double contractionLimit = 1024, const DistributedGraph &graph) {
+    double maximum_cluster_weight(const DistributedGraph &graph, double blocks = 4, double contractionLimit = 1024) {
         std::srand(std::time(NULL));
         int rand = std::rand() % 100000;
         int eps = rand / 100000000000.0;
-        return eps * (graph.global_total_node_weight() / number_of_clusters(blocks, contractionLimit, graph));
+        return eps * (graph.global_total_node_weight() / number_of_clusters(graph, blocks, contractionLimit));
     }
 
-    bool is_overweight(std::vector<std::pair<ClusterID, NodeWeight>> clusterWeight, const ClusterID c_id, 
+    bool is_overweight(const std::unordered_map<ClusterID, NodeWeight> cluster_node_weight, const ClusterID c_id, 
                         const NodeID n_id, const DistributedGraph &graph, double max_weight) {
-        for (auto&& [cluster, weight] : clusterWeight) {
+        for (auto&& [cluster, weight] : cluster_node_weight) {
             if (cluster == c_id) {
                 if (weight + graph.node_weight(n_id) > max_weight) {
                     return true;
@@ -46,15 +44,16 @@ namespace kaminpar::dist {
     }
 
     /** calculates the best cluster to put a node into; does not do anything related to global communication */
-    GlobalNodeID calculate_new_cluster(NodeID node, const DistributedGraph &graph, MyLPClustering::ClusterArray clusters, 
-                                        std::vector<clusterNodeWeight> clusterWeight, double max_weight) {
+    ClusterID calculate_new_cluster(NodeID node, const DistributedGraph &graph, const MyLPClustering::ClusterArray &clusters, 
+                                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, double max_weight) {
         /* find adjacent nodes
          * calculate cluster with maximum intra cluster edge weight
          * check weight of "new" edges and sum them up if in the same cluster, 
          * then choose cluster with the highest gain in weight
          * make sure max cluster weight constraint is not violated
          */
-        std::vector<clusterEdgeWeight> sums(0);
+
+        std::unordered_map<ClusterID, EdgeWeight> temp_edge_weights;
 
         for (auto&& edgeID : graph.incident_edges(node)) {
             NodeID target = graph.edge_target(edgeID);
@@ -62,23 +61,22 @@ namespace kaminpar::dist {
             ClusterID clusterID = clusters[target];
 
             // skip this cluster if it would be overweight
-            if (is_overweight(clusterWeight, clusterID, target, graph, max_weight)) {
+            if (is_overweight(cluster_node_weight, clusterID, target, graph, max_weight)) {
                 break;
             }
 
-            std::unordered_map<ClusterID, EdgeWeight> sums;
-            if (sums.find(clusterID) != sums.end()) {    // cluster is already represented in sums
-                EdgeWeight temp = sums[clusterID] + eweight;
-                sums.erase(clusterID);
-                sums.insert(std::make_pair(clusterID, temp));
-            } else {    // cluster is not yet represented in sums
-                sums.insert(std::make_pair(clusterID, eweight));
+            if (temp_edge_weights.find(clusterID) != temp_edge_weights.end()) {    // cluster is already represented in temp_edge_weights
+                EdgeWeight temp = temp_edge_weights[clusterID] + eweight;
+                temp_edge_weights.erase(clusterID);
+                temp_edge_weights.insert(std::make_pair(clusterID, temp));
+            } else {    // cluster is not yet represented in temp_edge_weights
+                temp_edge_weights.insert(std::make_pair(clusterID, eweight));
             }
         }
 
         // check for maxEdgeWeigth cluster
         std::pair<ClusterID, EdgeWeight> max = std::make_pair(0, 0);
-        for (auto&& pair : sums) {
+        for (auto&& pair : temp_edge_weights) {
             if (pair.second > max.second) {
                 max = pair;
             }
@@ -90,7 +88,7 @@ namespace kaminpar::dist {
 
     // find out whether an item is contained within a vector, needs "==" operator
     template<typename T>
-    bool contains(std::vector<T> vec, T item) {
+    bool contains(const std::vector<T> vec, const T item) {
         for (auto&& element : vec) {
             if (item == element) {
                 return true;
@@ -117,7 +115,8 @@ namespace kaminpar::dist {
      *  fills the appropriate send_buffers for Node u
      * this method is called after an update has been made to the cluster assignment of Node u
      */
-    void fill_send_buffers(NodeID u, MyLPClustering::ClusterArray clusters, std::map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
+    void fill_send_buffers(NodeID u, const MyLPClustering::ClusterArray clusters, std::map<PEID, update_vector> &send_buffers, 
+                            const DistributedGraph &graph) {
         for (PEID pe : ghost_neighbors(u, graph)) {
             send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
         }
@@ -191,11 +190,34 @@ namespace kaminpar::dist {
     }
 
     /**
+     * Adjusts the edge and node weights of the clusters.
+    */
+    void adjust_weights(const DistributedGraph &graph, NodeID node, ClusterID old_id, ClusterID new_id, 
+                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight) {
+        // TODO if cluster_node_weight == 0, remove cluster from lists
+
+    }
+
+    /**
      * This is one iteration of the clustering algorithm.
-     * New cluster assignments are calculated and the containers required for the label communication are filled.
+     * New cluster assignments are calculated and the containers for the new label assignments are filled 
+     * (namely clusters and send_buffers and cluster_node_weight and cluster_edge_weight).
      */
-    MyLPClustering::ClusterArray cluster_iteration() {
-        // TODO one iteration
+    void cluster_iteration(const DistributedGraph &graph, MyLPClustering::ClusterArray &clusters, 
+                                std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
+                                std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
+                                std::map<PEID, update_vector> &send_buffers) {
+        // TODO one iteration (calculate cluster assignment for each node, fill send buffers if necessary)
+        // calculate_new_cluster
+        send_buffers;
+        for (auto&& node : graph.nodes()) {
+            ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, maximum_cluster_weight(graph));
+            if (cl_id != clusters[node]) {
+                // TODO adjust weights
+                clusters[node] = cl_id;
+                fill_send_buffers(node, clusters, send_buffers, graph);
+            }
+        }
     }
 
     ///////////////////////////////////////////////////////////////////////////////
@@ -220,7 +242,8 @@ namespace kaminpar::dist {
         MyLPClustering::ClusterArray clusters(graph.total_n());
 
         // cluster weights of the clusters
-        std::vector<clusterNodeWeight> clusterWeight(graph.total_n());
+        std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
+        std::unordered_map<ClusterID, EdgeWeight> cluster_edge_weight;
 
         // MPI rank and size
         int myrank = mpi::get_comm_rank(graph.communicator());
@@ -258,7 +281,8 @@ namespace kaminpar::dist {
         for (NodeID u : graph.all_nodes()) {
             ClusterID g_id = graph.local_to_global_node(u);
             clusters[u] = g_id;
-            clusterWeight[u] = std::make_pair(g_id, graph.node_weight(u));
+            cluster_node_weight.insert(std::make_pair(g_id, graph.node_weight(u)));
+            cluster_edge_weight.insert(std::make_pair(g_id, 0));
         }
 
         // fill send buffers initally
@@ -267,7 +291,6 @@ namespace kaminpar::dist {
         }
 
         // communicate labels ()
-        
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
         set_up_alltoallv_send(send_buffers, *send_buffer, send_counts, send_displ);
@@ -286,6 +309,7 @@ namespace kaminpar::dist {
         for (int i = 0; i < iterations; i++) {
             // TODO add cluster_iteration() arguments
             // cluster_iteration();
+
             // communicate labels
             set_up_alltoallv_send(send_buffers, *send_buffer, send_counts, send_displ);
             set_up_alltoallv_recv(recv_counts, recv_displ, graph);
@@ -298,5 +322,7 @@ namespace kaminpar::dist {
             // clean up containers
             clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
         }
+
+        return clusters;
     }
 }
