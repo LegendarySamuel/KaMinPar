@@ -45,7 +45,7 @@ namespace kaminpar::dist {
         return false;
     }
 
-    /* calculates the best cluster to put a node into; does not do anything related to global communication */
+    /** calculates the best cluster to put a node into; does not do anything related to global communication */
     GlobalNodeID calculate_new_cluster(NodeID node, const DistributedGraph &graph, MyLPClustering::ClusterArray clusters, 
                                         std::vector<clusterNodeWeight> clusterWeight, double max_weight) {
         /* find adjacent nodes
@@ -113,7 +113,8 @@ namespace kaminpar::dist {
         return ghost_PEs;
     }
 
-    /* fills the appropriate send_buffers for Node u
+    /**
+     *  fills the appropriate send_buffers for Node u
      * this method is called after an update has been made to the cluster assignment of Node u
      */
     void fill_send_buffers(NodeID u, MyLPClustering::ClusterArray clusters, std::map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
@@ -122,11 +123,12 @@ namespace kaminpar::dist {
         }
     }
 
-    /* set up the necessary containers for an mpi alltoallv communication
+    /**
+     *  set up the necessary containers for an mpi alltoallv communication
      * setting up the send containers and fields
      */
-    void set_up_alltoallv_send(std::map<PEID, update_vector> send_buffers, update_vector &send_buffer,
-                            int *sendcounts, int *displacements) {
+    void set_up_alltoallv_send(const std::map<PEID, update_vector> send_buffers, update_vector &send_buffer,
+                            int *send_counts, int *send_displ) {
         int displ = 0;
         for (auto&& [peid, send] : send_buffers) {
             int count = 0;
@@ -135,12 +137,13 @@ namespace kaminpar::dist {
                 count++;
                 displ++;
             }
-            sendcounts[peid] = count;
-            displacements[peid] = displ - count;
+            send_counts[peid] = count;
+            send_displ[peid] = displ - count;
         }
     }
 
-    /* set up the necessary containers for an mpi alltoallv communication
+    /**
+     *  set up the necessary containers for an mpi alltoallv communication
      * setting up the receive containers and fields
      */
     void set_up_alltoallv_recv(int *recv_counts, int *recv_displ, const DistributedGraph &graph) {
@@ -161,6 +164,31 @@ namespace kaminpar::dist {
         }
     }
 
+    /**
+     * Cleans up the label communication containers after one iteration.
+    */
+    void clean_up_iteration(std::map<PEID, update_vector> &send_buffers, update_vector &send_buffer, int* send_counts, int* send_displ, 
+                                update_vector &recv_buffer, int* recv_counts, int* recv_displ) {
+        // send buffers to PEs
+        send_buffers.clear();
+        send_buffer.clear();
+        send_counts = {NULL};
+        send_displ = {0};
+
+        // receive buffer
+        recv_buffer.clear();
+        recv_counts = {NULL};
+        recv_displ = {0};
+    }
+
+    /**
+     * This is one iteration of the clustering algorithm.
+     * New cluster assignments are calculated and the containers required for the label communication are filled.
+     */
+    MyLPClustering::ClusterArray cluster_iteration() {
+        // TODO one iteration
+    }
+
     ///////////////////////////////////////////////////////////////////////////////
 
     void MyLPClustering::initialize(const DistributedGraph &graph) {
@@ -168,7 +196,8 @@ namespace kaminpar::dist {
     }
 
     // subgraphs are already given by initial partitioning
-    /* have to calculate clusters:
+    /**
+     * have to calculate clusters:
      * 1.) initialize clusters with single nodes
      * 2.) for each node maximize intra cluster edge weight by moving node to adjacent cluster without exceeding max cluster weight
      * (have to check for all nodes at the edges of clusters, not only for interface nodes)
@@ -202,8 +231,8 @@ namespace kaminpar::dist {
         // send buffers to PEs
         std::map<PEID, update_vector> send_buffers;
         update_vector *send_buffer = new update_vector();
-        int sendcounts[size] = {NULL};
-        int displacements[size] = {0};
+        int send_counts[size] = {NULL};
+        int send_displ[size] = {0};
 
         // receive buffer
         update_vector *recv_buffer = new update_vector();
@@ -232,13 +261,28 @@ namespace kaminpar::dist {
         
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
-        set_up_alltoallv_send(send_buffers, *send_buffer, sendcounts, displacements);
+        set_up_alltoallv_send(send_buffers, *send_buffer, send_counts, send_displ);
         set_up_alltoallv_recv(recv_counts, recv_displ, graph);
-        MPI_Alltoallv(send_buffer, sendcounts, displacements, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
+        MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
 
         mpi::barrier(graph.communicator());
+        // TODO evaluate recv_buffer content
         
-        ///////////////// maybe not TODO if ghost_neighbors is not empty put in sendbuffer
+        clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
+
         // TODO calculate new cluster assignments, do not communicate if node stays in the same cluster
+        int iterations = 10;
+        for (int i = 0; i < iterations; i++) {
+            // TODO add cluster_iteration() arguments
+            // cluster_iteration();
+            // communicate labels
+            set_up_alltoallv_send(send_buffers, *send_buffer, send_counts, send_displ);
+            set_up_alltoallv_recv(recv_counts, recv_displ, graph);
+            MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
+
+            mpi::barrier(graph.communicator());
+            // TODO evaluate recv_buffer content
+            clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
+        }
     }
 }
