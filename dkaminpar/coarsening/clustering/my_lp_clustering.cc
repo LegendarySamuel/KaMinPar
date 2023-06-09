@@ -1,11 +1,14 @@
 # include "dkaminpar/coarsening/clustering/my_lp_clustering.h"
 # include "dkaminpar/datastructures/distributed_graph.h"
 # include "dkaminpar/context.h"
+// # include "dkaminpar/mpi/grid_alltoall.h" vlt Alternative
 # include <cmath>
 # include <ctime>
 # include "oneapi/tbb.h"
 # include <utility>
+# include <map>
 # include <unordered_map>
+# include "mpi.h"
 
 namespace kaminpar::dist {
     using ClusterID = GlobalNodeID;
@@ -113,9 +116,48 @@ namespace kaminpar::dist {
     /* fills the appropriate send_buffers for Node u
      * this method is called after an update has been made to the cluster assignment of Node u
      */
-    void fill_send_buffers(NodeID u, MyLPClustering::ClusterArray clusters, std::unordered_map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
+    void fill_send_buffers(NodeID u, MyLPClustering::ClusterArray clusters, std::map<PEID, update_vector> send_buffers, const DistributedGraph &graph) {
         for (PEID pe : ghost_neighbors(u, graph)) {
             send_buffers.at(pe).push_back(std::make_pair(u, clusters[u]));
+        }
+    }
+
+    /* set up the necessary containers for an mpi alltoallv communication
+     * setting up the send containers and fields
+     */
+    void set_up_alltoallv_send(std::map<PEID, update_vector> send_buffers, update_vector &send_buffer,
+                            int *sendcounts, int *displacements) {
+        int displ = 0;
+        for (auto&& [peid, send] : send_buffers) {
+            int count = 0;
+            for (cluster_update upd : send) {
+                send_buffer.push_back(upd);
+                count++;
+                displ++;
+            }
+            sendcounts[peid] = count;
+            displacements[peid] = displ - count;
+        }
+    }
+
+    /* set up the necessary containers for an mpi alltoallv communication
+     * setting up the receive containers and fields
+     */
+    void set_up_alltoallv_recv(int *recv_counts, int *recv_displ, const DistributedGraph &graph) {
+        std::map<PEID, int> counts;
+        for (NodeID&& g : graph.ghost_nodes()) {
+            PEID id = graph.ghost_owner(g);
+            if (counts.find(id) != counts.end()) {
+                counts[id]++;
+            } else {
+                counts.insert(std::make_pair(id, 1));
+            }
+        }
+        int displ = 0;
+        for (auto&& [peid, count] : counts) {
+            recv_counts[peid] = count;
+            displ+=count;
+            recv_displ[peid] = displ - count;
         }
     }
 
@@ -143,7 +185,7 @@ namespace kaminpar::dist {
         std::vector<clusterNodeWeight> clusterWeight(graph.total_n());
 
         // MPI rank and size
-        int rank = mpi::get_comm_rank(graph.communicator());
+        int myrank = mpi::get_comm_rank(graph.communicator());
         int size = mpi::get_comm_size(graph.communicator());
 
         // adjacent PEs (put in hashmap to ensure uniqueness of PEs)
@@ -158,10 +200,15 @@ namespace kaminpar::dist {
         }
 
         // send buffers to PEs
-        std::unordered_map<PEID, update_vector> send_buffers;
+        std::map<PEID, update_vector> send_buffers;
+        update_vector *send_buffer = new update_vector();
+        int sendcounts[size] = {NULL};
+        int displacements[size] = {0};
 
         // receive buffer
-        update_vector recv_buffer();
+        update_vector *recv_buffer = new update_vector();
+        int recv_counts[size] = {NULL};
+        int recv_displ[size] = {0};
 
         // vectors for PEs
         for (auto&& [peid, _] : adj_PEs) {
@@ -181,13 +228,15 @@ namespace kaminpar::dist {
             fill_send_buffers(u, clusters, send_buffers, graph);
         }
 
-        // TODO communicate labels ()
+        // communicate labels ()
         
-        mpi::barrier(graph.communicator());
-        
+        MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
-        int begin = rank*size;
-        int end = rank*size + (graph.n()/size);
+        set_up_alltoallv_send(send_buffers, *send_buffer, sendcounts, displacements);
+        set_up_alltoallv_recv(recv_counts, recv_displ, graph);
+        MPI_Alltoallv(send_buffer, sendcounts, displacements, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
+
+        mpi::barrier(graph.communicator());
         
         ///////////////// maybe not TODO if ghost_neighbors is not empty put in sendbuffer
         // TODO calculate new cluster assignments, do not communicate if node stays in the same cluster
