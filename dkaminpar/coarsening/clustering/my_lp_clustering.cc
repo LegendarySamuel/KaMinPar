@@ -114,7 +114,7 @@ namespace kaminpar::dist {
         for (PEID pe : ghost_neighbors(u, graph)) {
             // update a label, if it has been changed before without being sent
             bool contained = false;
-            for (auto&& update : send_buffers[pe]) {
+            for (auto& update : send_buffers[pe]) {
                 if (update.first == u) {
                     update.second = clusters[u];
                     contained = true;
@@ -135,7 +135,7 @@ namespace kaminpar::dist {
     void set_up_alltoallv_send(const std::map<PEID, update_vector> send_buffers, update_vector &send_buffer,
                             int *send_counts, int *send_displ) {
         int displ = 0;
-        for (auto&& [peid, send] : send_buffers) {
+        for (auto& [peid, send] : send_buffers) {
             int count = 0;
             for (cluster_update upd : send) {
                 send_buffer.push_back(upd);
