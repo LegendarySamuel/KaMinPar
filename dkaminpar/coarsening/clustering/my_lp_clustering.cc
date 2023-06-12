@@ -256,11 +256,11 @@ namespace kaminpar::dist {
         }
     }
 
-    std::vector<NodeID>& isolated_nodes(const DistributedGraph &graph) {
-        std::vector<NodeID> isolated;
+    std::vector<NodeID>* isolated_nodes(const DistributedGraph &graph) {
+        std::vector<NodeID> *isolated = new std::vector<NodeID>;
         for (auto&& node : graph.nodes()) {
             if (graph.adjacent_nodes(node).begin() == graph.adjacent_nodes(node).end()) {
-                isolated.push_back(node);
+                (*isolated).push_back(node);
             }
         }
         return isolated;
@@ -270,7 +270,7 @@ namespace kaminpar::dist {
         // communicate your PEID, if you have isolated nodes; send -1 if you don't have isolated nodes
         PEID message;
         int size = mpi::get_comm_size(graph.communicator());
-        std::vector<NodeID> isolated = isolated_nodes(graph);
+        std::vector<NodeID> isolated = *isolated_nodes(graph);
         if(isolated.size() == 0) {
             message = -1;
         } else {
@@ -293,6 +293,7 @@ namespace kaminpar::dist {
                 break;
             }
         }
+        delete &isolated;
         return lowest;
     }
 
@@ -310,7 +311,7 @@ namespace kaminpar::dist {
         if (lowest == -1) {
             return;
         }
-        std::vector<NodeID> isolated = isolated_nodes(graph);
+        std::vector<NodeID> isolated = *isolated_nodes(graph);
         ClusterID isolated_cluster;
         if (rank == lowest) {
             isolated_cluster = graph.local_to_global_node(isolated[0]);
@@ -320,6 +321,7 @@ namespace kaminpar::dist {
         for (NodeID node : isolated) {
             clusters[node] = isolated_cluster;
         }
+        delete &isolated;
     }
 
     ///////////////////////////////////////////////////////////////////////////////
