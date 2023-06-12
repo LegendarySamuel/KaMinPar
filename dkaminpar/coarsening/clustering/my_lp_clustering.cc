@@ -270,8 +270,8 @@ namespace kaminpar::dist {
         // communicate your PEID, if you have isolated nodes; send -1 if you don't have isolated nodes
         PEID message;
         int size = mpi::get_comm_size(graph.communicator());
-        std::vector<NodeID> isolated = *isolated_nodes(graph);
-        if(isolated.size() == 0) {
+        std::vector<NodeID> *isolated = isolated_nodes(graph);
+        if((*isolated).size() == 0) {
             message = -1;
         } else {
             message = mpi::get_comm_rank(graph.communicator());
@@ -293,7 +293,7 @@ namespace kaminpar::dist {
                 break;
             }
         }
-        delete &isolated;
+        delete isolated;
         return lowest;
     }
 
@@ -311,17 +311,17 @@ namespace kaminpar::dist {
         if (lowest == -1) {
             return;
         }
-        std::vector<NodeID> isolated = *isolated_nodes(graph);
+        std::vector<NodeID> *isolated = isolated_nodes(graph);
         ClusterID isolated_cluster;
         if (rank == lowest) {
-            isolated_cluster = graph.local_to_global_node(isolated[0]);
+            isolated_cluster = graph.local_to_global_node((*isolated)[0]);
         }
         MPI_Bcast(&isolated_cluster, 1, MPI_INT, lowest, isolated_comm);
 
-        for (NodeID node : isolated) {
+        for (NodeID node : (*isolated)) {
             clusters[node] = isolated_cluster;
         }
-        delete &isolated;
+        delete isolated;
     }
 
     ///////////////////////////////////////////////////////////////////////////////
