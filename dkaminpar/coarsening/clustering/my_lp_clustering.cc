@@ -256,6 +256,72 @@ namespace kaminpar::dist {
         }
     }
 
+    std::vector<NodeID>& isolated_nodes(const DistributedGraph &graph) {
+        std::vector<NodeID> isolated;
+        for (auto&& node : graph.nodes()) {
+            if (graph.adjacent_nodes(node).begin() == graph.adjacent_nodes(node).end()) {
+                isolated.push_back(node);
+            }
+        }
+        return isolated;
+    }
+
+    PEID find_lowest_isolated_PEID(const DistributedGraph &graph) {
+        // communicate your PEID, if you have isolated nodes; send -1 if you don't have isolated nodes
+        PEID message;
+        int size = mpi::get_comm_size(graph.communicator());
+        std::vector<NodeID> isolated = isolated_nodes(graph);
+        if(isolated.size() == 0) {
+            message = -1;
+        } else {
+            message = mpi::get_comm_rank(graph.communicator());
+        }
+        PEID send[size] = {message};
+        PEID recv[size] = {-1};
+        MPI_Alltoall(send, size, MPI_INT,recv, size, MPI_INT, graph.communicator());
+        mpi::barrier(graph.communicator());
+        
+        // stop if you sent -1
+        if (message == -1) {
+            return -1;
+        }
+        // find lowest PEID
+        PEID lowest = message;
+        for (int i = 0; i < message; i++) {
+            if (recv[i] != -1 && recv[i] < message) {
+                lowest = recv[i];
+                break;
+            }
+        }
+        return lowest;
+    }
+
+    /**
+     * used to cluster the remaining isolated nodes.
+     * if a PEs PEID is higher than that of another one, the lower PEs clusterID is used for the isolated nodes.
+    */
+    void cluster_isolated_nodes(const DistributedGraph &graph, MyLPClustering::ClusterArray &clusters) {
+        // TODO
+        PEID lowest = find_lowest_isolated_PEID(graph);
+        PEID rank = mpi::get_comm_rank(graph.communicator());
+        MPI_Comm isolated_comm;
+        MPI_Comm_split(graph.communicator(), lowest, rank, &isolated_comm);
+
+        if (lowest == -1) {
+            return;
+        }
+        std::vector<NodeID> isolated = isolated_nodes(graph);
+        ClusterID isolated_cluster;
+        if (rank == lowest) {
+            isolated_cluster = graph.local_to_global_node(isolated[0]);
+        }
+        MPI_Bcast(&isolated_cluster, 1, MPI_INT, lowest, isolated_comm);
+
+        for (NodeID node : isolated) {
+            clusters[node] = isolated_cluster;
+        }
+    }
+
     ///////////////////////////////////////////////////////////////////////////////
 
     void MyLPClustering::initialize(const DistributedGraph &graph) {
@@ -359,6 +425,9 @@ namespace kaminpar::dist {
             // clean up containers
             clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
         }
+
+        // cluster_isolated_nodes
+        cluster_isolated_nodes(graph, clusters);
 
         return clusters;
     }
