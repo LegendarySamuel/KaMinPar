@@ -405,7 +405,7 @@ namespace kaminpar::dist {
         clean_up_iteration(send_buffers, *send_buffer, send_counts, send_displ, *recv_buffer, recv_counts, recv_displ);
 
         // global cluster iterations
-        int global_iterations = 5;
+        int global_iterations = 3;
         int local_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
             // local cluster iterations
