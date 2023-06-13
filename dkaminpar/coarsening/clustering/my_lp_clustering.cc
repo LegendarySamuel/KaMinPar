@@ -450,14 +450,11 @@ std::cout << "okay6" << std::endl;
 std::cout << "start global iterations" << std::endl;
         // global cluster iterations
         int global_iterations = 3;
-        int local_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
 std::cout << "start global iteration: " << i << std::endl;
-            // local cluster iterations
-            for (int y = 0; y < local_iterations; y++) {
-std::cout << "start local iteration: (" << i << ", " << y << ")" << std::endl;
-                cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
-            }
+            // local cluster iteration
+std::cout << "start local iteration: " << i << std::endl;
+            cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
 
             // communicate labels
             set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
