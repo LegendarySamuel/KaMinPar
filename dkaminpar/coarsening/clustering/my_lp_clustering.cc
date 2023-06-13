@@ -374,8 +374,8 @@ std::cout << "fill send buffers" << std::endl;
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // clusterIDs of the vertices
-        ClusterArray clusters(graph.total_n());
-        MyLPClustering::clusters() = clusters;
+        MyLPClustering::resize(graph.total_n());
+        ClusterArray clusters = MyLPClustering::clusters();
 
         // cluster weights of the clusters
         std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
@@ -434,7 +434,7 @@ std::cout << "start communication" << std::endl;
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 std::cout << "okay1" << std::endl;
-        set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
+/*        set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
 std::cout << "okay2" << std::endl;
         set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, graph);
 std::cout << "okay3: " << recv_counts[(myrank+1)%2] << " " << (*recv_buffer).size() << std::endl;
@@ -447,7 +447,7 @@ std::cout << "okay5" << std::endl;
 std::cout << "okay6" << std::endl;
         // clean up containers
         clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
-std::cout << "start global iterations" << std::endl;
+std::cout << "start global iterations" << std::endl;*/
         // global cluster iterations
         int global_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
