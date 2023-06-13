@@ -4,15 +4,19 @@
 
 namespace kaminpar::dist {
 class MyLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
+  private:
+    ClusterArray _clusters;
 
-public:
-  explicit MyLPClustering(const Context &ctx);
-  using ClusterArray = NoinitVector<GlobalNodeID>;
+  public:
+    using ClusterArray = NoinitVector<GlobalNodeID>;
+    explicit MyLPClustering(const Context &ctx) {};
 
-  ~MyLPClustering() override;
+    inline ClusterArray &clusters() { return _clusters; }
 
-  void initialize(const DistributedGraph &graph);
+    ~MyLPClustering() override;
 
-  ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight);
+    void initialize(const DistributedGraph &graph);
+
+    ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight);
 };
 }
