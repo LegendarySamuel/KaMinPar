@@ -428,15 +428,19 @@ std::cout << "start iteration: " << i << std::endl;
             cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
 
             // communicate labels
+std::cout << "setup: " << i << std::endl;
             set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
-            set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph); // TODO anpassen, dass es für hier passt
-            MPI_Alltoallv(&send_buffer, send_counts, send_displ, update_type, &recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
-
+            set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph);
+std::cout << "start comm: " << i << std::endl;            
+            MPI_Alltoallv(&send_buffer[0], send_counts, send_displ, update_type, &recv_buffer[0], recv_counts, recv_displ, update_type, graph.communicator());
+std::cout << "end comm: " << i << std::endl;
             mpi::barrier(graph.communicator());
             // evaluate recv_buffer content
+std::cout << "start eval: " << i << std::endl;
             evaluate_recv_buffer(recv_buffer, recv_counts, clusters, size, myrank, graph);
 
             // clean up containers
+std::cout << "clean up iter: " << i << std::endl;
             clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
         }
 std::cout << "start clustering isolated nodes" << std::endl;
