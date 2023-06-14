@@ -341,6 +341,7 @@ namespace kaminpar::dist {
             isolated_cluster = graph.local_to_global_node(isolated[0]);
         }
         MPI_Bcast(&isolated_cluster, 1, MPI_INT, lowest, isolated_comm);
+        MPI_Barrier(isolated_comm);
 
         for (NodeID node : isolated) {
             clusters[node] = isolated_cluster;
