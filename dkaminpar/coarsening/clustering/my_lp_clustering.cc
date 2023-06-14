@@ -291,6 +291,10 @@ namespace kaminpar::dist {
         return isolated;
     }
 
+    /**
+     * returns either the PEID of the PE with lowest PEID containing isolated nodes,
+     * or -1 if this PE does not contain isolated nodes
+    */
     PEID find_lowest_isolated_PEID(const DistributedGraph &graph) {
         // communicate your PEID, if you have isolated nodes; send -1 if you don't have isolated nodes
         PEID message;
@@ -329,7 +333,11 @@ namespace kaminpar::dist {
         PEID lowest = find_lowest_isolated_PEID(graph);
         PEID rank = mpi::get_comm_rank(graph.communicator());
         MPI_Comm isolated_comm;
-        MPI_Comm_split(graph.communicator(), lowest, rank, &isolated_comm);
+        uint8_t color = 0;  // color == 0 for all PEs containing isolated nodes
+        if (lowest == -1) {
+            color = 1;  // group all PEs that don't have isolated nodes
+        }
+        MPI_Comm_split(graph.communicator(), color, rank, &isolated_comm);
 
         if (lowest == -1) {
             return;
