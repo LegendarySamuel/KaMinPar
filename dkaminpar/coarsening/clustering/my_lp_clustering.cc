@@ -148,11 +148,23 @@ namespace kaminpar::dist {
     }
 
     /**
+     * Communicate with the other PEs to tell them how much you'll send 
+     * and find out how much to receive.
+    */
+    void find_recv_counts(int *send_counts, int *recv_counts, const DistributedGraph &graph) {
+        // int size = mpi::get_comm_size(graph.communicator());
+        MPI_Alltoall(send_counts, 1, MPI_INT, recv_counts, 1, MPI_INT, graph.communicator());
+        MPI_Barrier(graph.communicator());
+    }
+
+    /**
      *  set up the necessary containers for an mpi alltoallv communication
      * setting up the receive containers and fields
      */
-    void set_up_alltoallv_recv(int *recv_counts, int *recv_displ, update_vector *recv_buffer, const DistributedGraph &graph) {
-        std::map<PEID, int> counts;
+    void set_up_alltoallv_recv(int *recv_counts, int *recv_displ, update_vector *recv_buffer, 
+                                int *send_counts, const DistributedGraph &graph) {
+        find_recv_counts(send_counts, recv_counts, graph);
+        /*std::map<PEID, int> counts;
         for (NodeID&& g : graph.ghost_nodes()) {
             PEID id = graph.ghost_owner(g);
             if (counts.find(id) != counts.end()) {
@@ -160,12 +172,13 @@ namespace kaminpar::dist {
             } else {
                 counts.insert(std::make_pair(id, 1));
             }
-        }
+        }*/
         int total = 0;
-        for (auto&& [peid, count] : counts) {
-            total+=count;
-            recv_counts[peid] = count;
-            recv_displ[peid] = total - count;
+        int size = 0;
+        MPI_Comm_size(graph.communicator(), &size);
+        for (int i = 0; i < size; i++) {
+            recv_displ[i] = total;
+            total+=recv_counts[i];
         }
         // make place for elements to be received
         (*recv_buffer).resize(total);
@@ -458,6 +471,7 @@ std::cout << "start local iteration: " << i << std::endl;
 
             // communicate labels
             set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
+            set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph); // TODO anpassen, dass es für hier passt
             MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
 
             mpi::barrier(graph.communicator());
