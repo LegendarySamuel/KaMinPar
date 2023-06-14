@@ -202,20 +202,15 @@ namespace kaminpar::dist {
     void clean_up_iteration(std::map<PEID, update_vector> &send_buffers, update_vector &send_buffer, int* send_counts, 
                                 int* send_displ, update_vector &recv_buffer) {
         // send buffers to PEs
-std::cout << "here-1" << std::endl;
         for (auto&& [_, buf] : send_buffers) {
-std::cout << "here-0.5" << std::endl;
             buf.clear();
             buf.resize(0);
         }
-std::cout << "here0" << std::endl;
         send_buffer.clear();
         send_counts = {0};
         send_displ = {0};
-std::cout << "here1" << std::endl;
         // receive buffer
         recv_buffer.clear();
-std::cout << "here2" << std::endl;
     }
 
     /**
@@ -230,7 +225,7 @@ std::cout << "here2" << std::endl;
         // temporary weights to calculate the weight differences
         EdgeWeight old_delta = 0;
         EdgeWeight new_delta = 0;
-std::cout << "loop1" << std::endl;
+
         // calculate weight differences
         for (auto&& [e_id, target] : graph.neighbors(node)) {
             if (clusters[target] == old_id) {
@@ -239,24 +234,20 @@ std::cout << "loop1" << std::endl;
                 new_delta+=graph.edge_weight(e_id);
             }
         }
-std::cout << "sec2" << std::endl;
+
         // adjust weights
         NodeWeight node_weight = graph.node_weight(node);
         if (cluster_node_weight[old_id]-node_weight == 0) { // remove weights for empty cluster
             cluster_node_weight.erase(old_id);
             cluster_edge_weight.erase(old_id);
-std::cout << "3" << std::endl;
         } else {
             cluster_node_weight[old_id]-=node_weight;
             cluster_edge_weight[old_id]-=old_delta;
-std::cout << "8" << std::endl;
         }
         if (cluster_node_weight.find(new_id) == cluster_node_weight.end()) {
-std::cout << "if" << std::endl;
             cluster_node_weight.insert(std::make_pair(new_id, node_weight));
             cluster_edge_weight.insert(std::make_pair(new_id, new_delta));
         } else {
-std::cout << "else" << std::endl;
             NodeWeight temp_nw = cluster_node_weight[new_id];
             cluster_node_weight.erase(new_id);
             cluster_node_weight.insert(std::make_pair(new_id, temp_nw+node_weight));
@@ -265,7 +256,6 @@ std::cout << "else" << std::endl;
             cluster_edge_weight.erase(new_id);
             cluster_edge_weight.insert(std::make_pair(new_id, temp_ew+new_delta));
         }
-std::cout << "sec3" << std::endl;
 
         // set new clusterID
         clusters[node] = new_id;
@@ -283,13 +273,10 @@ std::cout << "sec3" << std::endl;
                                 GlobalNodeWeight max_cluster_weight) {
         // calculate_new_cluster for all owned nodes
         for (auto&& node : graph.nodes()) {
-std::cout << "start iteration for" << std::endl;
             ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, max_cluster_weight);
-std::cout << "calculated new cluster" << std::endl;
+
             if (cl_id != clusters[node]) {
-std::cout << "adjust clusters" << std::endl;
                 adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, cluster_edge_weight);
-std::cout << "fill send buffers" << std::endl;
                 fill_send_buffers(node, clusters, send_buffers, graph);
             }
         }
@@ -340,7 +327,6 @@ std::cout << "fill send buffers" << std::endl;
      * if a PEs PEID is higher than that of another one, the lower PEs clusterID is used for the isolated nodes.
     */
     void cluster_isolated_nodes(const DistributedGraph &graph, ClusterArray &clusters) {
-        // TODO
         PEID lowest = find_lowest_isolated_PEID(graph);
         PEID rank = mpi::get_comm_rank(graph.communicator());
         MPI_Comm isolated_comm;
@@ -426,22 +412,19 @@ std::cout << "total_n: " << myrank << ", " << graph.total_n() << std::endl;
             cluster_node_weight.insert(std::make_pair(g_id, graph.node_weight(u)));
             cluster_edge_weight.insert(std::make_pair(g_id, 0));
         }
-std::cout << "okay" << std::endl;
+
         // fill send buffers initally
         for (NodeID u : graph.nodes()) {
             fill_send_buffers(u, clusters, send_buffers, graph);
         }
-std::cout << "initialization complete" << std::endl;
-std::cout << "start communication" << std::endl;
+
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
-std::cout << "okay1" << std::endl;
 
         int global_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
-std::cout << "start global iteration: " << i << std::endl;
+std::cout << "start iteration: " << i << std::endl;
             // local cluster iteration
-std::cout << "start local iteration: " << i << std::endl;
             cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
 
             // communicate labels
