@@ -12,16 +12,16 @@ class MyLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
       _clusters.resize(total_nodes);
     }
 
-    inline ClusterArray &clusters() { return _clusters; }
+    inline ClusterArray &get_clusters() { return _clusters; }
 
     ~MyLPClustering() override;
 
     void initialize(const DistributedGraph &graph);
 
     ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight);
-
+    
   private:
-    ClusterArray _clusters;
+   ClusterArray _clusters;
 
 };
 }
