@@ -152,7 +152,6 @@ namespace kaminpar::dist {
      * and find out how much to receive.
     */
     void find_recv_counts(int *send_counts, int *recv_counts, const DistributedGraph &graph) {
-        // int size = mpi::get_comm_size(graph.communicator());
         MPI_Alltoall(send_counts, 1, MPI_INT, recv_counts, 1, MPI_INT, graph.communicator());
         MPI_Barrier(graph.communicator());
     }
