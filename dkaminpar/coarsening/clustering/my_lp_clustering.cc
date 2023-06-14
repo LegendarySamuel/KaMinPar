@@ -82,7 +82,7 @@ namespace kaminpar::dist {
 
     // find out whether an item is contained within a vector, needs "==" operator
     template<typename T>
-    bool contains(const std::vector<T> vec, const T item) {
+    bool contains(const std::vector<T> &vec, const T item) {
         for (auto&& element : vec) {
             if (item == element) {
                 return true;
@@ -92,13 +92,13 @@ namespace kaminpar::dist {
     }
 
     // used to find the PEs that have to be notified of a label update to u
-    std::vector<PEID> *ghost_neighbors(NodeID u, const DistributedGraph &graph) {
-        std::vector<PEID> *ghost_PEs = new std::vector<PEID>;
+    std::vector<PEID> ghost_neighbors(NodeID u, const DistributedGraph &graph) {
+        std::vector<PEID> ghost_PEs(0);
         for (auto&& [e, target] : graph.neighbors(u)) {
             if (graph.is_ghost_node(target)) {
                 int peid = graph.ghost_owner(target);
-                if (!contains(*ghost_PEs, peid)) {
-                    (*ghost_PEs).push_back(peid);
+                if (!contains(ghost_PEs, peid)) {
+                    ghost_PEs.push_back(peid);
                 }
             }
         }
@@ -111,7 +111,7 @@ namespace kaminpar::dist {
      */
     void fill_send_buffers(NodeID u, const ClusterArray &clusters, std::map<PEID, update_vector> &send_buffers, 
                             const DistributedGraph &graph) {
-        for (PEID pe : (*ghost_neighbors(u, graph))) {
+        for (PEID pe : ghost_neighbors(u, graph)) {
             // update a label, if it has been changed before without being sent
             bool contained = false;
             for (cluster_update update : send_buffers[pe]) {
@@ -132,13 +132,13 @@ namespace kaminpar::dist {
      *  set up the necessary containers for an mpi alltoallv communication
      * setting up the send containers and fields
      */
-    void set_up_alltoallv_send(const std::map<PEID, update_vector> send_buffers, update_vector *send_buffer,
+    void set_up_alltoallv_send(const std::map<PEID, update_vector> send_buffers, update_vector &send_buffer,
                             int *send_counts, int *send_displ) {
         int displ = 0;
         for (auto& [peid, send] : send_buffers) {
             int count = 0;
             for (cluster_update upd : send) {
-                (*send_buffer).push_back(upd);
+                send_buffer.push_back(upd);
                 count++;
                 displ++;
             }
@@ -161,18 +161,9 @@ namespace kaminpar::dist {
      *  set up the necessary containers for an mpi alltoallv communication
      * setting up the receive containers and fields
      */
-    void set_up_alltoallv_recv(int *recv_counts, int *recv_displ, update_vector *recv_buffer, 
+    void set_up_alltoallv_recv(int *recv_counts, int *recv_displ, update_vector &recv_buffer, 
                                 int *send_counts, const DistributedGraph &graph) {
         find_recv_counts(send_counts, recv_counts, graph);
-        /*std::map<PEID, int> counts;
-        for (NodeID&& g : graph.ghost_nodes()) {
-            PEID id = graph.ghost_owner(g);
-            if (counts.find(id) != counts.end()) {
-                counts[id]++;
-            } else {
-                counts.insert(std::make_pair(id, 1));
-            }
-        }*/
         int total = 0;
         int size = 0;
         MPI_Comm_size(graph.communicator(), &size);
@@ -181,13 +172,13 @@ namespace kaminpar::dist {
             total+=recv_counts[i];
         }
         // make place for elements to be received
-        (*recv_buffer).resize(total);
+        recv_buffer.resize(total);
     }
 
     /**
      * Evaluates and processes the contents of the recv_buffer.
     */
-    void evaluate_recv_buffer(update_vector *recv_buffer, int *recv_counts, 
+    void evaluate_recv_buffer(update_vector &recv_buffer, int *recv_counts, 
                                 ClusterArray &clusters, int size, 
                                 int myrank, const DistributedGraph &graph) {
         GlobalNodeID offset_n = 0;
@@ -198,8 +189,8 @@ namespace kaminpar::dist {
             }
             offset_n = graph.offset_n(s);
             for (int c = 0; c < recv_counts[s]; c++) {
-                NodeID local = graph.global_to_local_node((*recv_buffer)[index].first + offset_n);
-                clusters[local] = (*recv_buffer)[index].second;
+                NodeID local = graph.global_to_local_node(recv_buffer[index].first + offset_n);
+                clusters[local] = recv_buffer[index].second;
                 index++;
             }
         }
@@ -208,8 +199,8 @@ namespace kaminpar::dist {
     /**
      * Cleans up the label communication containers after one iteration.
     */
-    void clean_up_iteration(std::map<PEID, update_vector> &send_buffers, update_vector *send_buffer, int* send_counts, int* send_displ, 
-                                update_vector *recv_buffer) {
+    void clean_up_iteration(std::map<PEID, update_vector> &send_buffers, update_vector &send_buffer, int* send_counts, 
+                                int* send_displ, update_vector &recv_buffer) {
         // send buffers to PEs
 std::cout << "here-1" << std::endl;
         for (auto&& [_, buf] : send_buffers) {
@@ -218,12 +209,12 @@ std::cout << "here-0.5" << std::endl;
             buf.resize(0);
         }
 std::cout << "here0" << std::endl;
-        (*send_buffer).clear();
+        send_buffer.clear();
         send_counts = {0};
         send_displ = {0};
 std::cout << "here1" << std::endl;
         // receive buffer
-        (*recv_buffer).clear();
+        recv_buffer.clear();
 std::cout << "here2" << std::endl;
     }
 
@@ -304,11 +295,11 @@ std::cout << "fill send buffers" << std::endl;
         }
     }
 
-    std::vector<NodeID>* isolated_nodes(const DistributedGraph &graph) {
-        std::vector<NodeID> *isolated = new std::vector<NodeID>;
+    std::vector<NodeID> isolated_nodes(const DistributedGraph &graph) {
+        std::vector<NodeID> isolated(0);
         for (auto&& node : graph.nodes()) {
             if (graph.adjacent_nodes(node).begin() == graph.adjacent_nodes(node).end()) {
-                (*isolated).push_back(node);
+                isolated.push_back(node);
             }
         }
         return isolated;
@@ -318,8 +309,8 @@ std::cout << "fill send buffers" << std::endl;
         // communicate your PEID, if you have isolated nodes; send -1 if you don't have isolated nodes
         PEID message;
         int size = mpi::get_comm_size(graph.communicator());
-        std::vector<NodeID> *isolated = isolated_nodes(graph);
-        if((*isolated).size() == 0) {
+        std::vector<NodeID> isolated = isolated_nodes(graph);
+        if(isolated.size() == 0) {
             message = -1;
         } else {
             message = mpi::get_comm_rank(graph.communicator());
@@ -358,14 +349,14 @@ std::cout << "fill send buffers" << std::endl;
         if (lowest == -1) {
             return;
         }
-        std::vector<NodeID> *isolated = isolated_nodes(graph);
+        std::vector<NodeID> isolated = isolated_nodes(graph);
         ClusterID isolated_cluster;
         if (rank == lowest) {
-            isolated_cluster = graph.local_to_global_node((*isolated)[0]);
+            isolated_cluster = graph.local_to_global_node(isolated[0]);
         }
         MPI_Bcast(&isolated_cluster, 1, MPI_INT, lowest, isolated_comm);
 
-        for (NodeID node : (*isolated)) {
+        for (NodeID node : isolated) {
             clusters[node] = isolated_cluster;
         }
     }
@@ -411,22 +402,20 @@ std::cout << "total_n: " << myrank << ", " << graph.total_n() << std::endl;
 
         // send buffers to PEs
         std::map<PEID, update_vector> send_buffers;
-        std::vector<update_vector *> send_buf_ptrs;
-        update_vector *send_buffer = new update_vector();
+        update_vector send_buffer(0);
         int send_counts[size] = {0};
         int send_displ[size] = {0};
 
         // receive buffer
-        update_vector *recv_buffer = new update_vector();
+        update_vector recv_buffer(0);
         int recv_counts[size] = {0};
         int recv_displ[size] = {0};
 
         // vectors for PEs
         int z = 0;
         for (auto&& [peid, _] : adj_PEs) {
-            update_vector *temp = new update_vector();
-            send_buf_ptrs.push_back(temp);
-            send_buffers.insert(std::make_pair(peid, *send_buf_ptrs[z]));
+            update_vector temp(0);
+            send_buffers.insert(std::make_pair(peid, temp));
             z++;
         }
     
@@ -447,21 +436,7 @@ std::cout << "start communication" << std::endl;
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 std::cout << "okay1" << std::endl;
-/*        set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
-std::cout << "okay2" << std::endl;
-        set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, graph);
-std::cout << "okay3: " << recv_counts[(myrank+1)%2] << " " << (*recv_buffer).size() << std::endl;
-        int x = MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
-std::cout << "okay4: " << myrank << ", " <<  x << std::endl;
-        mpi::barrier(graph.communicator());
-        // evaluate recv_buffer content
-std::cout << "okay5" << std::endl;
-        evaluate_recv_buffer(recv_buffer, recv_counts, clusters, size, myrank, graph);
-std::cout << "okay6" << std::endl;
-        // clean up containers
-        clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
-std::cout << "start global iterations" << std::endl;*/
-        // global cluster iterations
+
         int global_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
 std::cout << "start global iteration: " << i << std::endl;
@@ -472,7 +447,7 @@ std::cout << "start local iteration: " << i << std::endl;
             // communicate labels
             set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
             set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph); // TODO anpassen, dass es für hier passt
-            MPI_Alltoallv(send_buffer, send_counts, send_displ, update_type, recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
+            MPI_Alltoallv(&send_buffer, send_counts, send_displ, update_type, &recv_buffer, recv_counts, recv_displ, update_type, graph.communicator());
 
             mpi::barrier(graph.communicator());
             // evaluate recv_buffer content
