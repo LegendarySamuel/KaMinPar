@@ -347,7 +347,7 @@ namespace kaminpar::dist {
             isolated_cluster = graph.local_to_global_node(isolated[0]);
         }
 
-        MPI_Bcast(&isolated_cluster, 1, MPI_INT, 0, isolated_comm);
+        MPI_Bcast(&isolated_cluster, 1, MPI_UINT64_T, 0, isolated_comm);
         MPI_Barrier(isolated_comm);
 
         for (NodeID node : isolated) {
@@ -452,7 +452,7 @@ std::cout << "clean up iter: " << i << std::endl;
         }
 std::cout << "start clustering isolated nodes" << std::endl;
         // cluster_isolated_nodes
-        //cluster_isolated_nodes(graph, get_clusters());
+        cluster_isolated_nodes(graph, get_clusters());
 std::cout << "start return clusterarray: (size=" << get_clusters().size() << ")" << std::endl;
         //return clusterarray
 std::cout << "get_clusters()[0]" << get_clusters()[0] << std::endl;
