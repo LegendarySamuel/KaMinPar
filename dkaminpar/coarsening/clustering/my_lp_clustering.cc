@@ -56,7 +56,7 @@ namespace kaminpar::dist {
 
             // skip this cluster if it would be overweight
             if (is_overweight(cluster_node_weight, clusterID, target, graph, max_cluster_weight)) {
-                break;
+                continue;
             }
 
             if (temp_edge_weights.find(clusterID) != temp_edge_weights.end()) {    // cluster is already represented in temp_edge_weights
