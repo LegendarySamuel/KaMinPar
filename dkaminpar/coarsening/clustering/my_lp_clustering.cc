@@ -75,7 +75,6 @@ namespace kaminpar::dist {
                 max = pair;
             }
         }
-
         // return new clusterID
         return max.first;
     }
@@ -132,7 +131,7 @@ namespace kaminpar::dist {
      *  set up the necessary containers for an mpi alltoallv communication
      * setting up the send containers and fields
      */
-    void set_up_alltoallv_send(const std::map<PEID, update_vector> send_buffers, update_vector &send_buffer,
+    void set_up_alltoallv_send(const std::map<PEID, update_vector> &send_buffers, update_vector &send_buffer,
                             int *send_counts, int *send_displ) {
         int displ = 0;
         for (auto& [peid, send] : send_buffers) {
@@ -177,20 +176,21 @@ namespace kaminpar::dist {
     /**
      * Evaluates and processes the contents of the recv_buffer.
     */
-    void evaluate_recv_buffer(update_vector &recv_buffer, int *recv_counts, 
+    void evaluate_recv_buffer(update_vector &recv_buffer, int *recv_counts, int *recv_displ,
                                 ClusterArray &clusters, int size, 
                                 int myrank, const DistributedGraph &graph) {
         GlobalNodeID offset_n = 0;
         int index = 0;
         for (int s = 0; s < size; s++) {
             if (myrank == s) {
-                break;
+                continue;
             }
             offset_n = graph.offset_n(s);
+
             for (int c = 0; c < recv_counts[s]; c++) {
+                index = recv_displ[s] + c;
                 NodeID local = graph.global_to_local_node(recv_buffer[index].first + offset_n);
                 clusters[local] = recv_buffer[index].second;
-                index++;
             }
         }
     }
@@ -203,7 +203,6 @@ namespace kaminpar::dist {
         // send buffers to PEs
         for (auto&& [_, buf] : send_buffers) {
             buf.clear();
-            buf.resize(0);
         }
         send_buffer.clear();
         send_counts = {0};
@@ -268,7 +267,7 @@ namespace kaminpar::dist {
     void cluster_iteration(const DistributedGraph &graph, ClusterArray &clusters, 
                                 std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
                                 std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
-                                std::map<PEID, update_vector> send_buffers, 
+                                std::map<PEID, update_vector> &send_buffers, 
                                 GlobalNodeWeight max_cluster_weight) {
         // calculate_new_cluster for all owned nodes
         for (auto&& node : graph.nodes()) {
@@ -373,7 +372,7 @@ namespace kaminpar::dist {
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // clusterIDs of the vertices
-        ClusterArray clusters = init_clusters(graph.total_n());
+        init_clusters(graph.total_n());
 
         // cluster weights of the clusters
         std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
@@ -416,14 +415,14 @@ std::cout << "total_n: " << myrank << ", " << graph.total_n() << std::endl;
         // initialize containers for local clusterIDs and cluster weights
         for (NodeID u : graph.all_nodes()) {
             ClusterID g_id = graph.local_to_global_node(u);
-            clusters[u] = g_id;
+            get_clusters()[u] = g_id;
             cluster_node_weight.insert(std::make_pair(g_id, graph.node_weight(u)));
             cluster_edge_weight.insert(std::make_pair(g_id, 0));
         }
 
         // fill send buffers initally
         for (NodeID u : graph.nodes()) {
-            fill_send_buffers(u, clusters, send_buffers, graph);
+            fill_send_buffers(u, get_clusters(), send_buffers, graph);
         }
 
         // communicate labels ()
@@ -433,7 +432,7 @@ std::cout << "total_n: " << myrank << ", " << graph.total_n() << std::endl;
         for (int i = 0; i < global_iterations; i++) {
 std::cout << "start iteration: " << i << std::endl;
             // local cluster iteration
-            cluster_iteration(graph, clusters, cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
+            cluster_iteration(graph, get_clusters(), cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
 
             // communicate labels
 std::cout << "setup: " << i << std::endl;
@@ -445,7 +444,7 @@ std::cout << "end comm: " << i << std::endl;
             mpi::barrier(graph.communicator());
             // evaluate recv_buffer content
 std::cout << "start eval: " << i << std::endl;
-            evaluate_recv_buffer(recv_buffer, recv_counts, clusters, size, myrank, graph);
+            evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph);
 
             // clean up containers
 std::cout << "clean up iter: " << i << std::endl;
@@ -453,9 +452,12 @@ std::cout << "clean up iter: " << i << std::endl;
         }
 std::cout << "start clustering isolated nodes" << std::endl;
         // cluster_isolated_nodes
-        cluster_isolated_nodes(graph, clusters);
+        //cluster_isolated_nodes(graph, get_clusters());
 std::cout << "start return clusterarray: (size=" << get_clusters().size() << ")" << std::endl;
         //return clusterarray
+std::cout << "get_clusters()[0]" << get_clusters()[0] << std::endl;
+std::cout << "get_clusters()[1]" << get_clusters()[1] << std::endl;
+std::cout << "get_clusters()[size]" << get_clusters()[get_clusters().size()] << std::endl;
         return get_clusters();
     }
 }
