@@ -8,6 +8,10 @@ class MyLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
     using ClusterArray = NoinitVector<GlobalNodeID>;
     explicit MyLPClustering(const Context &ctx) : _clusters(NoinitVector<GlobalNodeID>()) {};
 
+    inline ClusterArray &init_clusters( NodeID total_number ) {
+      return _clusters = NoinitVector<GlobalNodeID>(total_number);
+    }
+
     inline void resize( NodeID total_nodes ) {
       _clusters.resize(total_nodes);
     }

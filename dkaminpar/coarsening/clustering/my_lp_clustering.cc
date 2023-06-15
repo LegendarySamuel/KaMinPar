@@ -373,8 +373,7 @@ namespace kaminpar::dist {
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         // clusterIDs of the vertices
-        resize(graph.total_n());
-        ClusterArray clusters = get_clusters();
+        ClusterArray clusters = init_clusters(graph.total_n());
 
         // cluster weights of the clusters
         std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
@@ -455,7 +454,7 @@ std::cout << "clean up iter: " << i << std::endl;
 std::cout << "start clustering isolated nodes" << std::endl;
         // cluster_isolated_nodes
         cluster_isolated_nodes(graph, clusters);
-std::cout << "start return clusterarray" << std::endl;
+std::cout << "start return clusterarray: (size=" << get_clusters().size() << ")" << std::endl;
         //return clusterarray
         return get_clusters();
     }
