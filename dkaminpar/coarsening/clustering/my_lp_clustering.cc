@@ -205,12 +205,15 @@ namespace kaminpar::dist {
         // send buffers to PEs
         for (auto&& [_, buf] : send_buffers) {
             buf.clear();
+            KASSERT(buf.size() == 0);
         }
         send_buffer.clear();
+        KASSERT(send_buffer.size() == 0);
         send_counts = {0};
         send_displ = {0};
         // receive buffer
         recv_buffer.clear();
+        KASSERT(recv_buffer.size() == 0);
     }
 
     /**
@@ -222,6 +225,8 @@ namespace kaminpar::dist {
                         ClusterArray &clusters,
                         std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
                         std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight) {
+        KASSERT(graph.is_owned_node(node));
+        KASSERT(clusters[node] == old_id);
         // temporary weights to calculate the weight differences
         EdgeWeight old_delta = 0;
         EdgeWeight new_delta = 0;
@@ -259,6 +264,7 @@ namespace kaminpar::dist {
 
         // set new clusterID
         clusters[node] = new_id;
+        KASSERT(clusters[node] == new_id);
     }
 
     /**
@@ -271,8 +277,9 @@ namespace kaminpar::dist {
                                 std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
                                 std::map<PEID, update_vector> &send_buffers, 
                                 GlobalNodeWeight max_cluster_weight) {
-        // calculate_new_cluster for all owned nodes
+        // calculate new cluster for all owned nodes
         for (auto&& node : graph.nodes()) {
+            KASSERT(graph.is_owned_node(node));
             ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, max_cluster_weight);
 
             if (cl_id != clusters[node]) {
@@ -285,6 +292,7 @@ namespace kaminpar::dist {
     std::vector<NodeID> isolated_nodes(const DistributedGraph &graph) {
         std::vector<NodeID> isolated(0);
         for (auto&& node : graph.nodes()) {
+            KASSERT(graph.is_owned_node(node));
             if (graph.degree(node) == 0) {
                 isolated.push_back(node);
             }
@@ -323,6 +331,7 @@ namespace kaminpar::dist {
                 break;
             }
         }
+        KASSERT(0 <= lowest <= size);
         return lowest;
     }
 
@@ -413,6 +422,7 @@ namespace kaminpar::dist {
             send_buffers.insert(std::make_pair(peid, temp));
             z++;
         }
+        KASSERT(send_buffers.size() == adj_PEs.size());
     
         // initialize containers for local clusterIDs and cluster weights
         for (NodeID u : graph.all_nodes()) {
@@ -421,6 +431,8 @@ namespace kaminpar::dist {
             cluster_node_weight.insert(std::make_pair(g_id, graph.node_weight(u)));
             cluster_edge_weight.insert(std::make_pair(g_id, 0));
         }
+        KASSERT(cluster_node_weight.size() == graph.total_n());
+        KASSERT(cluster_edge_weight.size() == graph.total_n());
 
         // fill send buffers initally
         for (NodeID u : graph.nodes()) {
