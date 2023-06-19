@@ -414,7 +414,9 @@ namespace kaminpar::dist {
                         break;
                     }
                 }
-                if (!contained) {
+                if (!contained && graph.is_owned_global_node(cluster)) {
+                    KASSERT(cluster_node_weight.find(cluster) != cluster_node_weight.end());
+                    KASSERT(cluster_edge_weight.find(cluster) != cluster_edge_weight.end());
                     send_weights_buffer.push_back(std::make_tuple(cluster, cluster_node_weight.at(cluster), cluster_edge_weight.at(cluster)));
                     count++;
                 }
