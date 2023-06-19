@@ -63,8 +63,7 @@ namespace kaminpar::dist {
 
             if (temp_edge_weights.find(clusterID) != temp_edge_weights.end()) {    // cluster is already represented in temp_edge_weights
                 EdgeWeight temp = temp_edge_weights[clusterID] + eweight;
-                temp_edge_weights.erase(clusterID);
-                temp_edge_weights.insert(std::make_pair(clusterID, temp));
+                temp_edge_weights.insert_or_assign(clusterID, temp);
             } else {    // cluster is not yet represented in temp_edge_weights
                 temp_edge_weights.insert(std::make_pair(clusterID, eweight));
             }
@@ -110,12 +109,12 @@ namespace kaminpar::dist {
      *  fills the appropriate send_buffers for Node u
      * this method is called after an update has been made to the cluster assignment of Node u
      */
-    void fill_send_buffers(NodeID u, const ClusterArray &clusters, std::map<PEID, update_vector> &send_buffers,
+    void fill_send_buffers(NodeID u, std::map<PEID, update_vector> &send_buffers, const ClusterArray &clusters,
                              const DistributedGraph &graph) {
         for (PEID pe : ghost_neighbors(u, graph)) {
             // update a label, if it has been changed before without being sent
             bool contained = false;
-            for (cluster_update update : send_buffers[pe]) {
+            for (auto&& update : send_buffers[pe]) {
                 if (update.first == u) {
                     update.second = clusters[u];
                     KASSERT(update.second == clusters[u]);
@@ -286,7 +285,7 @@ namespace kaminpar::dist {
 
             if (cl_id != clusters[node]) {
                 adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, cluster_edge_weight);
-                fill_send_buffers(node, clusters, send_buffers, graph);
+                fill_send_buffers(node, send_buffers, clusters, graph);
             }
         }
     }
@@ -459,9 +458,18 @@ namespace kaminpar::dist {
         KASSERT(recv_weights_buffer.size() == 0);
     }
 
-    void print_clusters(ClusterArray &clusters) {
-        for (auto&& cluster : clusters) {
-            std::cout << cluster << " ";
+    void print_clusters(ClusterArray &clusters, const DistributedGraph &graph) {
+        int n = graph.n();
+        int g = graph.ghost_n();
+        std::cout << "owned nodes (" << n << "): ";
+        for (int i = 0; i < n; i++) {
+            std::cout << graph.local_to_global_node(i) << ":" << clusters[i] << " ";
+        }
+        std::cout << std::endl;
+        std::cout << "ghost nodes (" << g << "): ";
+        for (int i = n; i < g + n; i++) {
+            std::cout << graph.local_to_global_node(i) << ":" << clusters[i] << " ";
+            
         }
         std::cout << std::endl;
     }
@@ -482,6 +490,7 @@ namespace kaminpar::dist {
      * 3.) put all isolated nodes in one cluster
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
+        max_cluster_weight = 5;
         // clusterIDs of the vertices
         init_clusters(graph.total_n());
 
@@ -547,9 +556,9 @@ namespace kaminpar::dist {
         KASSERT(cluster_node_weight.size() == graph.total_n());
         KASSERT(cluster_edge_weight.size() == graph.total_n());
 
-        // fill send buffers initally
+        // fill send buffers initally dont need this
         for (NodeID u : graph.nodes()) {
-            fill_send_buffers(u, get_clusters(), send_buffers, graph);
+            fill_send_buffers(u, send_buffers, get_clusters(), graph);
         }
 
         // communicate labels ()
@@ -592,7 +601,7 @@ namespace kaminpar::dist {
         // cluster isolated nodes
         cluster_isolated_nodes(graph, get_clusters());
 
-print_clusters(get_clusters());
+print_clusters(get_clusters(), graph);
 
         //return clusterarray*/
         return get_clusters();
