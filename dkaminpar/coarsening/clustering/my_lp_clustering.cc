@@ -11,6 +11,7 @@
 # include "mpi.h"
 # include <iostream>
 # include <memory>
+# include <tuple>
 
 namespace kaminpar::dist {
 
@@ -18,6 +19,7 @@ namespace kaminpar::dist {
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
     using ClusterArray = MyLPClustering::ClusterArray;
+    using weights_vector = std::vector<std::tuple<ClusterID, NodeWeight, EdgeWeight>>;
 
     MyLPClustering::~MyLPClustering() = default;
 
@@ -366,6 +368,98 @@ namespace kaminpar::dist {
         }
     }
 
+    std::map<PEID, std::vector<NodeID>> calculate_interface_nodes(const DistributedGraph &graph) {
+        std::map<PEID, std::vector<NodeID>> interface_nodes;
+
+        for (auto&& node : graph.nodes()) {
+            for (auto&& [e, target] : graph.neighbors(node)) {
+                int peid = graph.ghost_owner(target);
+                if (graph.is_ghost_node(target)) {
+                    interface_nodes.insert(std::make_pair(peid, node));
+                }
+            }
+        }
+        return interface_nodes;
+    }
+
+    void set_up_weights_comm(weights_vector &send_weights_buffer, weights_vector &recv_weights_buffer, 
+                                int *send_weights_counts, int *send_weights_displ,
+                                int *recv_weights_counts, int *recv_weights_displ,
+                                std::map<PEID, std::vector<NodeID>> &interface_nodes, 
+                                const std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight,
+                                const std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
+                                const ClusterArray &clusters, int size,
+                                const DistributedGraph &graph) {
+        // fill send buffer
+        int displ = 0;
+        for (int pe = 0; pe < size; pe++) {
+            int count = 0;
+            for (NodeID node : interface_nodes.at(pe)) {
+                bool contained = false;
+                ClusterID cluster = clusters[node];
+                for (auto&& [cl_id, _, _] : send_weights_buffer) {
+                    if (cl_id == cluster) {
+                        contained == true;
+                        break;
+                    }
+                }
+                if (!contained) {
+                    send_weights_buffer.push_back(std::make_tuple(cluster, cluster_node_weight.at(cluster), cluster_edge_weight.at(cluster)));
+                    count++;
+                }
+            }
+            send_weights_counts[pe] = count;
+            send_weights_displ[pe] = displ;
+            displ+=count;
+        }
+        
+        // set up recv sizes
+        MPI_Alltoall(send_weights_counts, 1, MPI_INT, recv_weights_counts, 1, MPI_INT, graph.communicator());
+        MPI_Barrier(graph.communicator());
+
+        int total = 0;
+        for (int i = 0; i < size; i++) {
+            recv_weights_displ[i] = total;
+            total+=recv_weights_counts[i];
+        }
+        // make place for elements to be received
+        recv_weights_buffer.resize(total);
+    }
+
+    void evaluate_weights(std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight,
+                            std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
+                            const weights_vector &recv_weights_buffer, 
+                            int *recv_weights_counts, int size) {
+        for (int pe = 0; pe < size; pe++) {
+            int index = 0;
+            for (int i = 0; i < recv_weights_counts[pe]; i++) {
+                std::tuple<ClusterID, NodeWeight, EdgeWeight> tuple = recv_weights_buffer.at(index);
+                cluster_node_weight.insert_or_assign(std::get<ClusterID>(tuple), std::get<NodeWeight>(tuple));
+                cluster_edge_weight.insert_or_assign(std::get<ClusterID>(tuple), std::get<EdgeWeight>(tuple));
+                index++;
+            }
+        }
+    }
+
+    void clean_up_weights_comm(weights_vector &send_weights_buffer, int* send_weights_counts, 
+                                int* send_weights_displ, weights_vector &recv_weights_buffer) {
+        // send buffer
+        send_weights_buffer.clear();
+        KASSERT(send_weights_buffer.size() == 0);
+        send_weights_counts = {0};
+        send_weights_displ = {0};
+        // receive buffer
+        recv_weights_buffer.clear();
+        KASSERT(recv_weights_buffer.size() == 0);
+    }
+
+    void print_clusters(ClusterArray &clusters) {
+        for (auto&& cluster : clusters) {
+            std::cout << cluster << " ";
+        }
+        std::cout << std::endl;
+    }
+
     ///////////////////////////////////////////////////////////////////////////////
 
     void MyLPClustering::initialize(const DistributedGraph &graph) {
@@ -392,6 +486,19 @@ namespace kaminpar::dist {
         // MPI rank and size
         int myrank = mpi::get_comm_rank(graph.communicator());
         int size = mpi::get_comm_size(graph.communicator());
+
+        // interface nodes
+        std::map<PEID, std::vector<NodeID>> interface_nodes = calculate_interface_nodes(graph);
+
+        // buffers for cluster-weights communication
+        weights_vector send_weights_buffer(0);
+        weights_vector recv_weights_buffer(0);
+        int send_weights_counts[size] = {0};
+        int send_weights_displ[size] = {0};
+        int recv_weights_counts[size] = {0};
+        int recv_weights_displ[size] = {0};
+        
+        MPI_Datatype weights_update_type = mpi::type::get<weights_vector>();
         
         // adjacent PEs (put in hashmap to ensure uniqueness of PEs)
         std::unordered_map<PEID, PEID> adj_PEs;
@@ -458,11 +565,28 @@ namespace kaminpar::dist {
             // evaluate recv_buffer content
             evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph);
 
+            // exchange weights for ghost nodes
+            // need to send information about interface nodes' cluster weights
+            // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
+            set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+                                    recv_weights_counts, recv_weights_displ, interface_nodes, cluster_node_weight, cluster_edge_weight,
+                                    get_clusters(), size, graph);
+            
+            MPI_Alltoallv(&send_weights_buffer[0], send_weights_counts, send_weights_displ, weights_update_type, &recv_weights_buffer[0], 
+                            recv_weights_counts, recv_weights_displ, weights_update_type, graph.communicator());
+
+            // evaluate
+            evaluate_weights(cluster_node_weight, cluster_edge_weight, recv_weights_buffer, recv_weights_counts, size);
+
+            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer);
+
             // clean up containers
             clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
         }
         // cluster isolated nodes
         cluster_isolated_nodes(graph, get_clusters());
+
+print_clusters(get_clusters());
 
         //return clusterarray*/
         return get_clusters();
