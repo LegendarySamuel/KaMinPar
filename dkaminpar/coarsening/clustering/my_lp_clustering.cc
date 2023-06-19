@@ -374,7 +374,13 @@ namespace kaminpar::dist {
             for (auto&& [e, target] : graph.neighbors(node)) {
                 if (graph.is_ghost_node(target)) {
                     int peid = graph.ghost_owner(target);
-                    interface_nodes.insert(std::make_pair(peid, node));
+                    if (interface_nodes.find(peid) == interface_nodes.end()) {
+                        std::vector<NodeID> temp(0);
+                        temp.push_back(node);
+                        interface_nodes.insert(std::make_pair(peid, temp));
+                    } else {
+                        interface_nodes.at(peid).push_back(node);
+                    }
                 }
             }
         }
@@ -559,7 +565,7 @@ namespace kaminpar::dist {
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
-        int global_iterations = 1;
+        int global_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
             // local cluster iteration
             cluster_iteration(graph, get_clusters(), cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
@@ -578,7 +584,7 @@ namespace kaminpar::dist {
             // exchange weights for ghost nodes
             // need to send information about interface nodes' cluster weights
             // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
-            /*set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+            set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
                                     recv_weights_counts, recv_weights_displ, interface_nodes, cluster_node_weight, cluster_edge_weight,
                                     get_clusters(), size, graph);
             
@@ -588,7 +594,7 @@ namespace kaminpar::dist {
             // evaluate
             evaluate_weights(cluster_node_weight, cluster_edge_weight, recv_weights_buffer, recv_weights_counts, size);
 
-            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer);*/
+            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer);
 
             // clean up containers
             clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
