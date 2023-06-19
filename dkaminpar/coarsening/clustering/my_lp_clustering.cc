@@ -373,8 +373,8 @@ namespace kaminpar::dist {
 
         for (auto&& node : graph.nodes()) {
             for (auto&& [e, target] : graph.neighbors(node)) {
-                int peid = graph.ghost_owner(target);
                 if (graph.is_ghost_node(target)) {
+                    int peid = graph.ghost_owner(target);
                     interface_nodes.insert(std::make_pair(peid, node));
                 }
             }
