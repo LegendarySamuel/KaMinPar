@@ -390,14 +390,20 @@ namespace kaminpar::dist {
                                 const std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
                                 const ClusterArray &clusters, int size,
                                 const DistributedGraph &graph) {
-        // fill send buffer
+        // fill send buffer with the weights of owned clusters assigned to interface nodes
         int displ = 0;
         for (int pe = 0; pe < size; pe++) {
             int count = 0;
+            if (interface_nodes.find(pe) == interface_nodes.end()) {
+                continue;
+            }
             for (NodeID node : interface_nodes.at(pe)) {
                 bool contained = false;
                 ClusterID cluster = clusters[node];
-                for (auto&& [cl_id, _, _] : send_weights_buffer) {
+                for (auto&& [cl_id, a, b] : send_weights_buffer) {
+                    if (!graph.is_owned_global_node(cluster)) {
+                        break;
+                    }
                     if (cl_id == cluster) {
                         contained == true;
                         break;
@@ -434,8 +440,8 @@ namespace kaminpar::dist {
             int index = 0;
             for (int i = 0; i < recv_weights_counts[pe]; i++) {
                 std::tuple<ClusterID, NodeWeight, EdgeWeight> tuple = recv_weights_buffer.at(index);
-                cluster_node_weight.insert_or_assign(std::get<ClusterID>(tuple), std::get<NodeWeight>(tuple));
-                cluster_edge_weight.insert_or_assign(std::get<ClusterID>(tuple), std::get<EdgeWeight>(tuple));
+                cluster_node_weight.insert_or_assign(std::get<0>(tuple), std::get<1>(tuple));
+                cluster_edge_weight.insert_or_assign(std::get<0>(tuple), std::get<2>(tuple));
                 index++;
             }
         }
