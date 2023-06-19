@@ -442,9 +442,9 @@ namespace kaminpar::dist {
     void evaluate_weights(std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight,
                             std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
                             const weights_vector &recv_weights_buffer, 
-                            int *recv_weights_counts, int size) {
+                            int *recv_weights_counts, int size) {      
+        int index = 0;
         for (int pe = 0; pe < size; pe++) {
-            int index = 0;
             for (int i = 0; i < recv_weights_counts[pe]; i++) {
                 std::tuple<ClusterID, NodeWeight, EdgeWeight> tuple = recv_weights_buffer.at(index);
                 cluster_node_weight.insert_or_assign(std::get<0>(tuple), std::get<1>(tuple));
@@ -567,7 +567,7 @@ namespace kaminpar::dist {
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
-        int global_iterations = 3;
+int global_iterations = 1;
         for (int i = 0; i < global_iterations; i++) {
             // local cluster iteration
             cluster_iteration(graph, get_clusters(), cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
@@ -580,6 +580,7 @@ namespace kaminpar::dist {
                             recv_displ, update_type, graph.communicator());
 
             mpi::barrier(graph.communicator());
+
             // evaluate recv_buffer content
             evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph);
 
@@ -592,6 +593,7 @@ namespace kaminpar::dist {
             
             MPI_Alltoallv(&send_weights_buffer[0], send_weights_counts, send_weights_displ, weights_update_type, &recv_weights_buffer[0], 
                             recv_weights_counts, recv_weights_displ, weights_update_type, graph.communicator());
+            mpi::barrier(graph.communicator());
 
             // evaluate
             evaluate_weights(cluster_node_weight, cluster_edge_weight, recv_weights_buffer, recv_weights_counts, size);
