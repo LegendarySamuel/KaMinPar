@@ -490,7 +490,7 @@ namespace kaminpar::dist {
      * 3.) put all isolated nodes in one cluster
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
-        max_cluster_weight = 5;
+
         // clusterIDs of the vertices
         init_clusters(graph.total_n());
 
@@ -556,11 +556,6 @@ namespace kaminpar::dist {
         KASSERT(cluster_node_weight.size() == graph.total_n());
         KASSERT(cluster_edge_weight.size() == graph.total_n());
 
-        // fill send buffers initally dont need this
-        for (NodeID u : graph.nodes()) {
-            fill_send_buffers(u, send_buffers, get_clusters(), graph);
-        }
-
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
@@ -583,7 +578,7 @@ namespace kaminpar::dist {
             // exchange weights for ghost nodes
             // need to send information about interface nodes' cluster weights
             // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
-            set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+            /*set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
                                     recv_weights_counts, recv_weights_displ, interface_nodes, cluster_node_weight, cluster_edge_weight,
                                     get_clusters(), size, graph);
             
@@ -593,15 +588,13 @@ namespace kaminpar::dist {
             // evaluate
             evaluate_weights(cluster_node_weight, cluster_edge_weight, recv_weights_buffer, recv_weights_counts, size);
 
-            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer);
+            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer);*/
 
             // clean up containers
             clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
         }
         // cluster isolated nodes
         cluster_isolated_nodes(graph, get_clusters());
-
-print_clusters(get_clusters(), graph);
 
         //return clusterarray*/
         return get_clusters();
