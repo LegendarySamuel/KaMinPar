@@ -521,7 +521,7 @@ namespace kaminpar::dist {
         int recv_weights_counts[size] = {0};
         int recv_weights_displ[size] = {0};
         
-        MPI_Datatype weights_update_type = mpi::type::get<weights_vector>();
+        MPI_Datatype weights_update_type = mpi::type::get<std::tuple<ClusterID, NodeWeight, EdgeWeight>>();
         
         // adjacent PEs (put in hashmap to ensure uniqueness of PEs)
         std::unordered_map<PEID, PEID> adj_PEs;
@@ -567,7 +567,7 @@ namespace kaminpar::dist {
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
-int global_iterations = 1;
+        int global_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
             // local cluster iteration
             cluster_iteration(graph, get_clusters(), cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
