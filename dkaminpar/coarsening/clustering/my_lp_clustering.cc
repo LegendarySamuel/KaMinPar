@@ -19,13 +19,13 @@ namespace kaminpar::dist {
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
     using ClusterArray = MyLPClustering::ClusterArray;
-    using weights_vector = std::vector<std::tuple<ClusterID, NodeWeight, EdgeWeight>>;
+    using weights_vector = std::vector<std::tuple<ClusterID, GlobalNodeWeight, GlobalEdgeWeight>>;
 
     MyLPClustering::~MyLPClustering() = default;
 
     /////////////////////////////////////////////////////////////////////////////// helpers
 
-    bool is_overweight(const std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, const ClusterID c_id, 
+    bool is_overweight(const std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, const ClusterID c_id, 
                         const NodeID n_id, const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         for (auto&& [cluster, weight] : cluster_node_weight) {
             if (cluster == c_id) {
@@ -41,7 +41,7 @@ namespace kaminpar::dist {
 
     /** calculates the best cluster to put a node into; does not do anything related to global communication */
     ClusterID calculate_new_cluster(NodeID node, const DistributedGraph &graph, const ClusterArray &clusters, 
-                                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, GlobalNodeWeight max_cluster_weight) {
+                                        std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, GlobalNodeWeight max_cluster_weight) {
         /* find adjacent nodes
          * calculate cluster with maximum intra cluster edge weight
          * check weight of "new" edges and sum them up if in the same cluster, 
@@ -224,8 +224,8 @@ namespace kaminpar::dist {
     */
     void adjust_clusters(const DistributedGraph &graph, NodeID node, ClusterID old_id, ClusterID new_id, 
                         ClusterArray &clusters,
-                        std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
-                        std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight) {
+                        std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, 
+                        std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight) {
         KASSERT(graph.is_owned_node(node));
         KASSERT(clusters[node] == old_id);
         // temporary weights to calculate the weight differences
@@ -254,7 +254,7 @@ namespace kaminpar::dist {
             cluster_node_weight.insert(std::make_pair(new_id, node_weight));
             cluster_edge_weight.insert(std::make_pair(new_id, new_delta));
         } else {
-            NodeWeight temp_nw = cluster_node_weight[new_id];
+            GlobalNodeWeight temp_nw = cluster_node_weight[new_id];
             cluster_node_weight.erase(new_id);
             cluster_node_weight.insert(std::make_pair(new_id, temp_nw+node_weight));
 
@@ -274,8 +274,8 @@ namespace kaminpar::dist {
      * (namely clusters and send_buffers and cluster_node_weight and cluster_edge_weight).
      */
     void cluster_iteration(const DistributedGraph &graph, ClusterArray &clusters, 
-                                std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight, 
-                                std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
+                                std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, 
+                                std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight, 
                                 std::map<PEID, update_vector> &send_buffers, 
                                 GlobalNodeWeight max_cluster_weight) {
         // calculate new cluster for all owned nodes
@@ -337,10 +337,48 @@ namespace kaminpar::dist {
     }
 
     /**
+     * clusters isolated nodes locally and then returns a vector of nodes containing isolated nodes, 
+     * that don't completely fill a cluster
+    */
+    std::vector<NodeID> cluster_isolated_locally(const DistributedGraph &graph, ClusterArray &clusters, 
+                                                    std::unordered_map<ClusterID, GlobalNodeWeight> cluster_node_weight, 
+                                                    GlobalNodeWeight max_cluster_weight) {
+        std::vector<NodeID> isolated = isolated_nodes(graph);
+
+        std::vector<NodeID> unfinished_nodes(0);
+        NodeID current_i_node = isolated.back();
+        isolated.pop_back();
+        unfinished_nodes.push_back(current_i_node);
+        ClusterID current_cl_id = graph.local_to_global_node(current_i_node);
+        
+        // iterate over all nodes
+        while(!isolated.empty()) {
+            NodeID u = isolated.back();
+            NodeWeight u_weight = graph.node_weight(u);
+            isolated.pop_back();
+
+            // check weight constraint und update accordingly
+            if (cluster_node_weight.at(current_cl_id)+u_weight > max_cluster_weight) {      // if full, start new cluster
+                unfinished_nodes.clear();
+                current_i_node = u;
+                unfinished_nodes.push_back(u);
+                current_cl_id = graph.local_to_global_node(u);
+            } else {    // if not full add to cluster
+                unfinished_nodes.push_back(u);
+                clusters[u] = current_cl_id;
+                cluster_node_weight.at(current_cl_id)+=u_weight;
+            }
+        }
+
+        // return vector of unfinished nodes
+        return unfinished_nodes;
+    }
+
+    /**
      * used to cluster the remaining isolated nodes.
      * if a PEs PEID is higher than that of another one, the lower PEs clusterID is used for the isolated nodes.
     */
-    void cluster_isolated_nodes(const DistributedGraph &graph, ClusterArray &clusters) {
+    void cluster_isolated_nodes(const DistributedGraph &graph, ClusterArray &clusters, GlobalNodeWeight max_cluster_weight) {
         PEID lowest = find_lowest_isolated_PEID(graph);
         PEID rank = mpi::get_comm_rank(graph.communicator());
         MPI_Comm isolated_comm;
@@ -391,8 +429,8 @@ namespace kaminpar::dist {
                                 int *send_weights_counts, int *send_weights_displ,
                                 int *recv_weights_counts, int *recv_weights_displ,
                                 std::map<PEID, std::vector<NodeID>> &interface_nodes, 
-                                const std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight,
-                                const std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
+                                const std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
+                                const std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight, 
                                 const ClusterArray &clusters, int size,
                                 const DistributedGraph &graph) {
         // fill send buffer with the weights of owned clusters assigned to interface nodes
@@ -439,14 +477,14 @@ namespace kaminpar::dist {
         recv_weights_buffer.resize(total);
     }
 
-    void evaluate_weights(std::unordered_map<ClusterID, NodeWeight> &cluster_node_weight,
-                            std::unordered_map<ClusterID, EdgeWeight> &cluster_edge_weight, 
+    void evaluate_weights(std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
+                            std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight, 
                             const weights_vector &recv_weights_buffer, 
                             int *recv_weights_counts, int size) {      
         int index = 0;
         for (int pe = 0; pe < size; pe++) {
             for (int i = 0; i < recv_weights_counts[pe]; i++) {
-                std::tuple<ClusterID, NodeWeight, EdgeWeight> tuple = recv_weights_buffer.at(index);
+                std::tuple<ClusterID, GlobalNodeWeight, GlobalEdgeWeight> tuple = recv_weights_buffer.at(index);
                 cluster_node_weight.insert_or_assign(std::get<0>(tuple), std::get<1>(tuple));
                 cluster_edge_weight.insert_or_assign(std::get<0>(tuple), std::get<2>(tuple));
                 index++;
@@ -503,8 +541,8 @@ namespace kaminpar::dist {
         init_clusters(graph.total_n());
 
         // cluster weights of the clusters
-        std::unordered_map<ClusterID, NodeWeight> cluster_node_weight;
-        std::unordered_map<ClusterID, EdgeWeight> cluster_edge_weight;
+        std::unordered_map<ClusterID, GlobalNodeWeight> cluster_node_weight;
+        std::unordered_map<ClusterID, GlobalEdgeWeight> cluster_edge_weight;
 
         // MPI rank and size
         int myrank = mpi::get_comm_rank(graph.communicator());
@@ -521,7 +559,7 @@ namespace kaminpar::dist {
         int recv_weights_counts[size] = {0};
         int recv_weights_displ[size] = {0};
         
-        MPI_Datatype weights_update_type = mpi::type::get<std::tuple<ClusterID, NodeWeight, EdgeWeight>>();
+        MPI_Datatype weights_update_type = mpi::type::get<std::tuple<ClusterID, GlobalNodeWeight, GlobalEdgeWeight>>();
         
         // adjacent PEs (put in hashmap to ensure uniqueness of PEs)
         std::unordered_map<PEID, PEID> adj_PEs;
@@ -604,9 +642,10 @@ namespace kaminpar::dist {
             clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
         }
         // cluster isolated nodes
-        cluster_isolated_nodes(graph, get_clusters());
+        //cluster_isolated_nodes(graph, get_clusters(), max_cluster_weight);
+        cluster_isolated_locally(graph, get_clusters(), cluster_node_weight, max_cluster_weight);
 
-        //return clusterarray*/
+        //return clusterarray
         return get_clusters();
     }
 }
