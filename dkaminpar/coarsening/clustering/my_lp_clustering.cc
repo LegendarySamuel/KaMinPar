@@ -281,6 +281,9 @@ namespace kaminpar::dist {
         // calculate new cluster for all owned nodes
         for (auto&& node : graph.nodes()) {
             KASSERT(graph.is_owned_node(node));
+            if (graph.degree(node) == 0) {
+                continue;
+            }
             ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, max_cluster_weight);
 
             if (cl_id != clusters[node]) {
@@ -350,12 +353,14 @@ namespace kaminpar::dist {
         isolated.pop_back();
         unfinished_nodes.push_back(current_i_node);
         ClusterID current_cl_id = graph.local_to_global_node(current_i_node);
-        
+
         // iterate over all nodes
         while(!isolated.empty()) {
             NodeID u = isolated.back();
             NodeWeight u_weight = graph.node_weight(u);
             isolated.pop_back();
+            KASSERT(cluster_node_weight.find(current_cl_id) != cluster_node_weight.end());
+            KASSERT(graph.is_owned_global_node(current_cl_id));
 
             // check weight constraint und update accordingly
             if (cluster_node_weight.at(current_cl_id)+u_weight > max_cluster_weight) {      // if full, start new cluster
@@ -374,7 +379,7 @@ namespace kaminpar::dist {
         return unfinished_nodes;
     }
 
-    /**
+    /** @deprecated
      * used to cluster the remaining isolated nodes.
      * if a PEs PEID is higher than that of another one, the lower PEs clusterID is used for the isolated nodes.
     */
@@ -642,7 +647,6 @@ namespace kaminpar::dist {
             clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
         }
         // cluster isolated nodes
-        //cluster_isolated_nodes(graph, get_clusters(), max_cluster_weight);
         cluster_isolated_locally(graph, get_clusters(), cluster_node_weight, max_cluster_weight);
 
         //return clusterarray
