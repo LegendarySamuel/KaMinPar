@@ -339,18 +339,15 @@ namespace kaminpar::dist {
     }
 
     /**
-     * clusters isolated nodes locally and then returns a vector of nodes containing isolated nodes, 
-     * that don't completely fill a cluster
+     * clusters isolated nodes locally
     */
-    std::vector<NodeID> cluster_isolated_locally(const DistributedGraph &graph, ClusterArray &clusters, 
+    void cluster_isolated_locally(const DistributedGraph &graph, ClusterArray &clusters, 
                                                     std::unordered_map<ClusterID, GlobalNodeWeight> cluster_node_weight, 
                                                     GlobalNodeWeight max_cluster_weight) {
         std::vector<NodeID> isolated = isolated_nodes(graph);
 
-        std::vector<NodeID> unfinished_nodes(0);
         NodeID current_i_node = isolated.back();
         isolated.pop_back();
-        unfinished_nodes.push_back(current_i_node);
         ClusterID current_cl_id = graph.local_to_global_node(current_i_node);
 
         // iterate over all nodes
@@ -363,19 +360,13 @@ namespace kaminpar::dist {
 
             // check weight constraint und update accordingly
             if (cluster_node_weight.at(current_cl_id)+u_weight > max_cluster_weight) {      // if full, start new cluster
-                unfinished_nodes.clear();
                 current_i_node = u;
-                unfinished_nodes.push_back(u);
                 current_cl_id = graph.local_to_global_node(u);
             } else {    // if not full add to cluster
-                unfinished_nodes.push_back(u);
                 clusters[u] = current_cl_id;
                 cluster_node_weight.at(current_cl_id)+=u_weight;
             }
         }
-
-        // return vector of unfinished nodes
-        return unfinished_nodes;
     }
 
     /** @deprecated
