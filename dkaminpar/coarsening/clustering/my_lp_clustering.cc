@@ -294,9 +294,9 @@ namespace kaminpar::dist {
                                 std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, 
                                 weight_updates &remote_weights_changes, 
                                 std::map<PEID, update_vector> &send_buffers, 
-                                GlobalNodeWeight max_cluster_weight) {
+                                GlobalNodeWeight max_cluster_weight, NodeID start_node, int batchsize) {
         // calculate new cluster for all owned nodes
-        for (auto&& node : graph.nodes()) {
+        for (NodeID node = start_node; (node != *graph.nodes().end()) && (node < start_node+batchsize); node++) {
             KASSERT(graph.is_owned_node(node));
             if (graph.degree(node) == 0) {
                 continue;
@@ -308,6 +308,18 @@ namespace kaminpar::dist {
                 fill_send_buffers(node, send_buffers, clusters, graph);
             }
         }
+        /*for (auto&& node : graph.nodes()) {
+            KASSERT(graph.is_owned_node(node));
+            if (graph.degree(node) == 0) {
+                continue;
+            }
+            ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, max_cluster_weight);
+
+            if (cl_id != clusters[node]) {
+                adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, remote_weights_changes);
+                fill_send_buffers(node, send_buffers, clusters, graph);
+            }
+        }*/
     }
 
     std::vector<NodeID> isolated_nodes(const DistributedGraph &graph) {
@@ -363,6 +375,10 @@ namespace kaminpar::dist {
                                                     std::unordered_map<ClusterID, GlobalNodeWeight> cluster_node_weight, 
                                                     GlobalNodeWeight max_cluster_weight) {
         std::vector<NodeID> isolated = isolated_nodes(graph);
+
+        if (isolated.empty()) {
+            return;
+        }
 
         NodeID current_i_node = isolated.back();
         isolated.pop_back();
@@ -772,65 +788,77 @@ namespace kaminpar::dist {
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
+        int num_batches = std::max(8, 128/size);
+        int batchsize = (graph.n()/num_batches) + 1;
+        if (batchsize == 0) {
+            batchsize = 1;
+            num_batches = graph.n();
+        }
         int global_iterations = 3;
         for (int i = 0; i < global_iterations; i++) {
-            // local cluster iteration
-            cluster_iteration(graph, get_clusters(), cluster_node_weight, remote_weights_changes, send_buffers, max_cluster_weight);
+            int start_node = 0;
+            for (int batch = 0; batch < num_batches; batch++) {
+                start_node = batch*batchsize;
+            
+                // local cluster iteration
+                cluster_iteration(graph, get_clusters(), cluster_node_weight, remote_weights_changes, send_buffers, max_cluster_weight,
+                                    start_node, batchsize);
 
-            // communicate labels
-            set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
-            set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph);
+                // communicate labels
+                set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
+                set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph);
      
-            MPI_Alltoallv(&send_buffer[0], send_counts, send_displ, update_type, &recv_buffer[0], recv_counts, 
-                            recv_displ, update_type, graph.communicator());
+                MPI_Alltoallv(&send_buffer[0], send_counts, send_displ, update_type, &recv_buffer[0], recv_counts, 
+                                recv_displ, update_type, graph.communicator());
 
-            mpi::barrier(graph.communicator());
+                mpi::barrier(graph.communicator());
 
-            // evaluate recv_buffer content
-            evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph, remote_weights_changes);
+                // evaluate recv_buffer content
+                evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph, remote_weights_changes);
 
 
-            // send the changes in remote clusters to the corresponding owning PEs
-            set_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, recv_remote_weights_changes_buf, 
-                                        send_remote_weights_changes_counts, send_remote_weights_changes_displ,
-                                        recv_remote_weights_changes_counts, recv_remote_weights_changes_displ, 
-                                        size, graph);
+                // send the changes in remote clusters to the corresponding owning PEs
+                set_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, recv_remote_weights_changes_buf, 
+                                            send_remote_weights_changes_counts, send_remote_weights_changes_displ,
+                                            recv_remote_weights_changes_counts, recv_remote_weights_changes_displ, 
+                                            size, graph);
             
-            MPI_Alltoallv(&send_remote_weights_changes_buf[0], send_remote_weights_changes_counts, 
-                            send_remote_weights_changes_displ, weights_update_type, &recv_remote_weights_changes_buf[0], 
-                            recv_remote_weights_changes_counts, recv_remote_weights_changes_displ, weights_update_type, 
-                            graph.communicator());
-            mpi::barrier(graph.communicator());
+                MPI_Alltoallv(&send_remote_weights_changes_buf[0], send_remote_weights_changes_counts, 
+                                send_remote_weights_changes_displ, weights_update_type, &recv_remote_weights_changes_buf[0], 
+                                recv_remote_weights_changes_counts, recv_remote_weights_changes_displ, weights_update_type, 
+                                graph.communicator());
+                mpi::barrier(graph.communicator());
 
-            // evaluate
-            calculate_weights(cluster_node_weight, recv_remote_weights_changes_buf, recv_remote_weights_changes_counts, 
-                                must_update, changed_clusters, get_clusters(), size, max_cluster_weight, graph);
+                // evaluate
+                calculate_weights(cluster_node_weight, recv_remote_weights_changes_buf, recv_remote_weights_changes_counts, 
+                                    must_update, changed_clusters, get_clusters(), size, max_cluster_weight, graph);
 
-            clean_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, send_remote_weights_changes_counts, 
-                                            send_remote_weights_changes_displ, recv_remote_weights_changes_buf);
+                clean_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, send_remote_weights_changes_counts, 
+                                                send_remote_weights_changes_displ, recv_remote_weights_changes_buf);
 
 
-            // exchange weights for ghost nodes
-            // need to send information about interface nodes' cluster weights
-            // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
-            set_up_weights_comm2(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
-                                    recv_weights_counts, recv_weights_displ, must_update,
-                                    changed_clusters, cluster_node_weight, get_clusters(), size, graph);
-            /*set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
-                                    recv_weights_counts, recv_weights_displ, interface_nodes, 
-                                    cluster_node_weight, get_clusters(), size, graph);*/
+                // exchange weights for ghost nodes
+                // need to send information about interface nodes' cluster weights
+                // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
+                set_up_weights_comm2(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+                                        recv_weights_counts, recv_weights_displ, must_update,
+                                        changed_clusters, cluster_node_weight, get_clusters(), size, graph);
+                /*set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+                                        recv_weights_counts, recv_weights_displ, interface_nodes, 
+                                        cluster_node_weight, get_clusters(), size, graph);*/
             
-            MPI_Alltoallv(&send_weights_buffer[0], send_weights_counts, send_weights_displ, weights_update_type, &recv_weights_buffer[0], 
-                            recv_weights_counts, recv_weights_displ, weights_update_type, graph.communicator());
-            mpi::barrier(graph.communicator());
+                MPI_Alltoallv(&send_weights_buffer[0], send_weights_counts, send_weights_displ, weights_update_type, &recv_weights_buffer[0], 
+                                recv_weights_counts, recv_weights_displ, weights_update_type, graph.communicator());
+                mpi::barrier(graph.communicator());
 
-            // evaluate
-            evaluate_weights(cluster_node_weight, recv_weights_buffer, recv_weights_counts, size);
+                // evaluate
+                evaluate_weights(cluster_node_weight, recv_weights_buffer, recv_weights_counts, size);
 
-            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer, changed_clusters);
+                clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer, changed_clusters);
 
-            // clean up containers
-            clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
+                // clean up containers
+                clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
+            }
         }
         // cluster isolated nodes
         cluster_isolated_locally(graph, get_clusters(), cluster_node_weight, max_cluster_weight);
