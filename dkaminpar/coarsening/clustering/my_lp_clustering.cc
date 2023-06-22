@@ -1,6 +1,7 @@
 # include "dkaminpar/coarsening/clustering/my_lp_clustering.h"
 # include "dkaminpar/datastructures/distributed_graph.h"
 # include "dkaminpar/context.h"
+# include "common/timer.h"
 // # include "dkaminpar/mpi/grid_alltoall.h" vlt Alternative
 # include <cmath>
 # include <ctime>
@@ -202,6 +203,7 @@ namespace kaminpar::dist {
                 NodeID local = graph.global_to_local_node(recv_buffer[index].first + offset_n);
                 KASSERT(graph.is_ghost_node(local));
                 // TODO currrently changing the clusterID to the new one, since we clustered to the ghost node
+                // probably problematic though, since we would be adding a whole cluster to a new one, instead of just one node
                 /*if (remote_weights_changes.find(s) != remote_weights_changes.end()) {
                     auto iter = remote_weights_changes.at(s).begin();
                     while (iter != remote_weights_changes.at(s).end()) {
@@ -251,6 +253,7 @@ namespace kaminpar::dist {
         KASSERT(graph.is_owned_node(node));
         KASSERT(clusters[node] == old_id);
 
+        // add weight change for remote cluster
         GlobalNodeWeight global_node_weight = graph.node_weight(node);
         if (!graph.is_owned_global_node(new_id)) {  // new cluster not owned
             PEID owner = graph.find_owner_of_global_node(new_id);
@@ -519,10 +522,22 @@ namespace kaminpar::dist {
                     if (pair.second + cluster_node_weight[current_cl_id] > max_cluster_weight) {
                         // TODO in this case, we actually have to revert cluster assignments
                         // Idea: communicate that cluster is overweight and separate the cluster into one owned by each PE
+                        /**
+                         * communicate ClusterID1 to PE and set ClusterID of each owned node in that PE having this ClusterID1 
+                         * to a GlobalNodeID of one of those nodes (first node found)
+                         * calculate the new clusternodeweights of each cluster involved
+                         * Problem: might lead to repeating moves
+                         * Possible solution: set weight of ClusterID1 to maxclusterweight, 
+                         * this prevents additional nodes from being added to ClusterID1, but might prevent a more optimal solution
+                        */
                         index++;
                         continue;
                     } else {
-                        // TODO maybe need to use [] operator
+                        // TODO maybe need to use [] operator, or maybe change ownership of cluster
+                        // I think in this case, the local part of the cluster is empty, so changing 
+                        // ownership of the cluster is sensible, might lead to problems though
+                        // alternatively keep ownership and send changes in weight
+                        // if only one PE is owning nodes of that cluster, this just leads to a little overhead, no problems
                         cluster_node_weight.insert_or_assign(current_cl_id, 
                                                                 cluster_node_weight.at(current_cl_id) + pair.second);
                         index++;
@@ -711,7 +726,8 @@ namespace kaminpar::dist {
      * 3.) put all isolated nodes in one cluster
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
-
+        SCOPED_TIMER("Start label propagation clustering");
+        START_TIMER("Initialize");
         // clusterIDs of the vertices
         init_clusters(graph.total_n());
 
@@ -788,6 +804,7 @@ namespace kaminpar::dist {
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
+        // set up loop
         int num_batches = std::max(8, 128/size);
         int batchsize = (graph.n()/num_batches) + 1;
         if (batchsize == 0) {
@@ -795,15 +812,22 @@ namespace kaminpar::dist {
             num_batches = graph.n();
         }
         int global_iterations = 3;
+        STOP_TIMER();
+        
         for (int i = 0; i < global_iterations; i++) {
+            START_TIMER("Cluster iteration");
             int start_node = 0;
             for (int batch = 0; batch < num_batches; batch++) {
+                START_TIMER("Compute batch");
                 start_node = batch*batchsize;
-            
+
+                START_TIMER("Compute new cluster assignments");
                 // local cluster iteration
                 cluster_iteration(graph, get_clusters(), cluster_node_weight, remote_weights_changes, send_buffers, max_cluster_weight,
                                     start_node, batchsize);
+                STOP_TIMER();
 
+                START_TIMER("Communicate labels");
                 // communicate labels
                 set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
                 set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph);
@@ -815,8 +839,9 @@ namespace kaminpar::dist {
 
                 // evaluate recv_buffer content
                 evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph, remote_weights_changes);
+                STOP_TIMER();
 
-
+                START_TIMER("Communicate weight changes to remote clusters");
                 // send the changes in remote clusters to the corresponding owning PEs
                 set_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, recv_remote_weights_changes_buf, 
                                             send_remote_weights_changes_counts, send_remote_weights_changes_displ,
@@ -835,8 +860,9 @@ namespace kaminpar::dist {
 
                 clean_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, send_remote_weights_changes_counts, 
                                                 send_remote_weights_changes_displ, recv_remote_weights_changes_buf);
+                STOP_TIMER();
 
-
+                START_TIMER("Communicate relevant cluster weights");
                 // exchange weights for ghost nodes
                 // need to send information about interface nodes' cluster weights
                 // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
@@ -855,13 +881,18 @@ namespace kaminpar::dist {
                 evaluate_weights(cluster_node_weight, recv_weights_buffer, recv_weights_counts, size);
 
                 clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer, changed_clusters);
+                STOP_TIMER();
 
                 // clean up containers
                 clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
+                STOP_TIMER();
             }
+            STOP_TIMER();
         }
+        START_TIMER("Cluster isolated nodes");
         // cluster isolated nodes
         cluster_isolated_locally(graph, get_clusters(), cluster_node_weight, max_cluster_weight);
+        STOP_TIMER();
 
         //return clusterarray
         return get_clusters();
