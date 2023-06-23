@@ -693,7 +693,7 @@ namespace kaminpar::dist {
     void change_cluster_assignments(ClusterID old_id, ClusterArray &clusters, const DistributedGraph &graph, 
                                     cluster_weight &remote_cluster_weight_portion, 
                                     std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
-                                    GlobalNodeWeight weight) {
+                                    GlobalNodeWeight weight, GlobalNodeWeight max_cluster_weight) {
         ClusterID new_id;
         for (auto&& o : graph.nodes()) {
             if (clusters[o] == old_id) {
@@ -706,7 +706,8 @@ namespace kaminpar::dist {
                 clusters[o] = new_id;
             }
         }
-        cluster_node_weight.at(old_id) = weight;
+        //cluster_node_weight.at(old_id) = weight;
+        cluster_node_weight.at(old_id) = max_cluster_weight;
         cluster_node_weight.insert(std::make_pair(new_id, remote_cluster_weight_portion.at(old_id)));
         remote_cluster_weight_portion.at(old_id) = 0;
     }
@@ -722,7 +723,7 @@ namespace kaminpar::dist {
                 if (pair.second > max_cluster_weight) {
                     // set cluster to local node (cluster was too heavy)
                     change_cluster_assignments(pair.first, clusters, graph, remote_cluster_weight_portion, 
-                                                cluster_node_weight, pair.second-max_cluster_weight);
+                                                cluster_node_weight, pair.second-max_cluster_weight, max_cluster_weight);
                 }
                 cluster_node_weight.insert_or_assign(pair.first, pair.second);
                 index++;
