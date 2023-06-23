@@ -255,10 +255,16 @@ namespace kaminpar::dist {
                 cluster_weight temp;
                 temp.insert(std::make_pair(new_id, global_node_weight));
                 remote_weights_changes.insert(std::make_pair(owner, temp));
+                if (remote_weights_changes.at(owner).find(old_id) != remote_weights_changes.at(owner).end()) {
+                    remote_weights_changes.at(owner).at(old_id)-=global_node_weight;
+                }
             } else {
                 // add delta
                 GlobalNodeWeight current = remote_weights_changes.at(owner).find(new_id)->second;
                 remote_weights_changes.at(owner).insert_or_assign(new_id, current+global_node_weight);
+                if (remote_weights_changes.at(owner).find(old_id) != remote_weights_changes.at(owner).end()) {
+                    remote_weights_changes.at(owner).at(old_id)-=global_node_weight;
+                }
             }
             // change total local cluster weight for remote cluster
             if (remote_cluster_weight_portion.find(new_id) == remote_cluster_weight_portion.end()) {
