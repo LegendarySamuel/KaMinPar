@@ -1,10 +1,10 @@
 # include "dkaminpar/coarsening/clustering/my_lp_clustering.h"
 # include "dkaminpar/datastructures/distributed_graph.h"
 # include "dkaminpar/context.h"
+# include "common/timer.h"
 // # include "dkaminpar/mpi/grid_alltoall.h" vlt Alternative
 # include <cmath>
 # include <ctime>
-# include "oneapi/tbb.h"
 # include <utility>
 # include <map>
 # include <unordered_map>
@@ -12,6 +12,7 @@
 # include <iostream>
 # include <memory>
 # include <tuple>
+# include <set>
 
 namespace kaminpar::dist {
 
@@ -19,7 +20,20 @@ namespace kaminpar::dist {
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
     using ClusterArray = MyLPClustering::ClusterArray;
-    using weights_vector = std::vector<std::tuple<ClusterID, GlobalNodeWeight, GlobalEdgeWeight>>;
+
+    using WeightDelta = GlobalNodeWeight;
+    using WeightPart = GlobalNodeWeight;
+
+    // weight
+    using weight_change = std::pair<ClusterID, GlobalNodeWeight>;
+    using weights_vector = std::vector<weight_change>;
+    using cluster_weight = std::map<ClusterID, GlobalNodeWeight>;
+    using weight_updates = std::map<PEID, cluster_weight>;
+
+    // remote
+    using remote_weight_change = std::tuple<ClusterID, WeightDelta, WeightPart>;
+    using remote_changes_vector = std::vector<remote_weight_change>;
+
 
     MyLPClustering::~MyLPClustering() = default;
 
@@ -69,8 +83,11 @@ namespace kaminpar::dist {
             }
         }
 
+        if (temp_edge_weights.empty()) {
+            return clusters[node];
+        }
         // check for maxEdgeWeigth cluster
-        std::pair<ClusterID, EdgeWeight> max = std::make_pair(0, 0);
+        std::pair<ClusterID, EdgeWeight> max = *temp_edge_weights.begin();
         for (auto&& pair : temp_edge_weights) {
             if (pair.second > max.second) {
                 max = pair;
@@ -180,7 +197,8 @@ namespace kaminpar::dist {
      * Evaluates and processes the contents of the recv_buffer.
     */
     void evaluate_recv_buffer(update_vector &recv_buffer, int *recv_counts, int *recv_displ,
-                                ClusterArray &clusters, int size, int myrank, const DistributedGraph &graph) {
+                                ClusterArray &clusters, int size, int myrank, const DistributedGraph &graph, 
+                                weight_updates &remote_weights_changes) {
         GlobalNodeID offset_n = 0;
         int index = 0;
         for (int s = 0; s < size; s++) {
@@ -225,19 +243,34 @@ namespace kaminpar::dist {
     void adjust_clusters(const DistributedGraph &graph, NodeID node, ClusterID old_id, ClusterID new_id, 
                         ClusterArray &clusters,
                         std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, 
-                        std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight) {
+                        weight_updates &remote_weights_changes, cluster_weight &remote_cluster_weight_portion) {
         KASSERT(graph.is_owned_node(node));
         KASSERT(clusters[node] == old_id);
-        // temporary weights to calculate the weight differences
-        EdgeWeight old_delta = 0;
-        EdgeWeight new_delta = 0;
 
-        // calculate weight differences
-        for (auto&& [e_id, target] : graph.neighbors(node)) {
-            if (clusters[target] == old_id) {
-                old_delta+=graph.edge_weight(e_id);
-            } else if (clusters[target] == new_id) {
-                new_delta+=graph.edge_weight(e_id);
+        // add weight change for remote cluster
+        GlobalNodeWeight global_node_weight = graph.node_weight(node);
+        if (!graph.is_owned_global_node(new_id)) {  // new cluster not owned
+            PEID owner = graph.find_owner_of_global_node(new_id);
+            if (remote_weights_changes.find(owner) == remote_weights_changes.end()) {
+                cluster_weight temp;
+                temp.insert(std::make_pair(new_id, global_node_weight));
+                remote_weights_changes.insert(std::make_pair(owner, temp));
+            } else {
+                // add delta
+                GlobalNodeWeight current = remote_weights_changes.at(owner).find(new_id)->second;
+                remote_weights_changes.at(owner).insert_or_assign(new_id, current+global_node_weight);
+            }
+            // change total local cluster weight for remote cluster
+            if (remote_cluster_weight_portion.find(new_id) == remote_cluster_weight_portion.end()) {
+                if (remote_cluster_weight_portion.find(old_id) != remote_cluster_weight_portion.end()) {
+                    remote_cluster_weight_portion.at(old_id)-=global_node_weight;
+                }
+                remote_cluster_weight_portion.insert(std::make_pair(new_id, global_node_weight));
+            } else {
+                if (remote_cluster_weight_portion.find(old_id) != remote_cluster_weight_portion.end()) {
+                    remote_cluster_weight_portion.at(old_id)-=global_node_weight;
+                }
+                remote_cluster_weight_portion.at(new_id)+=global_node_weight;
             }
         }
 
@@ -245,22 +278,15 @@ namespace kaminpar::dist {
         NodeWeight node_weight = graph.node_weight(node);
         if (cluster_node_weight[old_id]-node_weight == 0) { // remove weights for empty cluster
             cluster_node_weight.erase(old_id);
-            cluster_edge_weight.erase(old_id);
         } else {
             cluster_node_weight[old_id]-=node_weight;
-            cluster_edge_weight[old_id]-=old_delta;
         }
         if (cluster_node_weight.find(new_id) == cluster_node_weight.end()) {
             cluster_node_weight.insert(std::make_pair(new_id, node_weight));
-            cluster_edge_weight.insert(std::make_pair(new_id, new_delta));
         } else {
             GlobalNodeWeight temp_nw = cluster_node_weight[new_id];
             cluster_node_weight.erase(new_id);
             cluster_node_weight.insert(std::make_pair(new_id, temp_nw+node_weight));
-
-            EdgeWeight temp_ew = cluster_edge_weight[new_id];
-            cluster_edge_weight.erase(new_id);
-            cluster_edge_weight.insert(std::make_pair(new_id, temp_ew+new_delta));
         }
 
         // set new clusterID
@@ -275,11 +301,11 @@ namespace kaminpar::dist {
      */
     void cluster_iteration(const DistributedGraph &graph, ClusterArray &clusters, 
                                 std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, 
-                                std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight, 
-                                std::map<PEID, update_vector> &send_buffers, 
-                                GlobalNodeWeight max_cluster_weight) {
+                                weight_updates &remote_weights_changes, 
+                                std::map<PEID, update_vector> &send_buffers, cluster_weight &remote_cluster_weight_portion,
+                                GlobalNodeWeight max_cluster_weight, NodeID start_node, int batchsize) {
         // calculate new cluster for all owned nodes
-        for (auto&& node : graph.nodes()) {
+        for (NodeID node = start_node; (node != *graph.nodes().end()) && (node < start_node+batchsize); node++) {
             KASSERT(graph.is_owned_node(node));
             if (graph.degree(node) == 0) {
                 continue;
@@ -287,7 +313,8 @@ namespace kaminpar::dist {
             ClusterID cl_id = calculate_new_cluster(node, graph, clusters, cluster_node_weight, max_cluster_weight);
 
             if (cl_id != clusters[node]) {
-                adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, cluster_edge_weight);
+                adjust_clusters(graph, node, clusters[node], cl_id, clusters, cluster_node_weight, 
+                                    remote_weights_changes, remote_cluster_weight_portion);
                 fill_send_buffers(node, send_buffers, clusters, graph);
             }
         }
@@ -340,18 +367,19 @@ namespace kaminpar::dist {
     }
 
     /**
-     * clusters isolated nodes locally and then returns a vector of nodes containing isolated nodes, 
-     * that don't completely fill a cluster
+     * clusters isolated nodes locally
     */
-    std::vector<NodeID> cluster_isolated_locally(const DistributedGraph &graph, ClusterArray &clusters, 
+    void cluster_isolated_locally(const DistributedGraph &graph, ClusterArray &clusters, 
                                                     std::unordered_map<ClusterID, GlobalNodeWeight> cluster_node_weight, 
                                                     GlobalNodeWeight max_cluster_weight) {
         std::vector<NodeID> isolated = isolated_nodes(graph);
 
-        std::vector<NodeID> unfinished_nodes(0);
+        if (isolated.empty()) {
+            return;
+        }
+
         NodeID current_i_node = isolated.back();
         isolated.pop_back();
-        unfinished_nodes.push_back(current_i_node);
         ClusterID current_cl_id = graph.local_to_global_node(current_i_node);
 
         // iterate over all nodes
@@ -364,19 +392,13 @@ namespace kaminpar::dist {
 
             // check weight constraint und update accordingly
             if (cluster_node_weight.at(current_cl_id)+u_weight > max_cluster_weight) {      // if full, start new cluster
-                unfinished_nodes.clear();
                 current_i_node = u;
-                unfinished_nodes.push_back(u);
                 current_cl_id = graph.local_to_global_node(u);
             } else {    // if not full add to cluster
-                unfinished_nodes.push_back(u);
                 clusters[u] = current_cl_id;
                 cluster_node_weight.at(current_cl_id)+=u_weight;
             }
         }
-
-        // return vector of unfinished nodes
-        return unfinished_nodes;
     }
 
     /** @deprecated
@@ -430,37 +452,217 @@ namespace kaminpar::dist {
         return interface_nodes;
     }
 
+    /** 
+     * needs to be called before communicating the weights changes to remote clusters
+    */
+    void set_up_remote_weights_comm(weight_updates &remote_weights_changes, remote_changes_vector &send_remote_weights_changes_buf, 
+                                    remote_changes_vector &recv_remote_weights_changes_buf, 
+                                    cluster_weight &remote_cluster_weight_portion,
+                                    int *send_remote_weights_changes_counts, int *send_remote_weights_changes_displ,
+                                    int *recv_remote_weights_changes_counts, int *recv_remote_weights_changes_displ, 
+                                    int size, const DistributedGraph &graph) {
+        int displ = 0;
+        for (int pe = 0; pe < size; pe++) {
+            int count = 0;
+            if (remote_weights_changes.find(pe) == remote_weights_changes.end()) {
+                continue;
+            }
+            for (auto&& [cl_id, gl_nw] : remote_weights_changes.at(pe)) {
+                WeightPart wp = 0;
+                for (auto&& [c, w] : remote_cluster_weight_portion) {
+                    if (cl_id == c) {
+                        wp = w;
+                        break;
+                    }
+                }
+                send_remote_weights_changes_buf.push_back(std::make_tuple(cl_id, gl_nw, wp));
+                count++;
+            }
+            send_remote_weights_changes_counts[pe] = count;
+            send_remote_weights_changes_displ[pe] = displ;
+            displ+=count;
+        }
+
+        // set up recv sizes
+        MPI_Alltoall(send_remote_weights_changes_counts, 1, MPI_INT, recv_remote_weights_changes_counts, 1, MPI_INT, graph.communicator());
+        MPI_Barrier(graph.communicator());
+        int total = 0;
+        for (int i = 0; i < size; i++) {
+            recv_remote_weights_changes_displ[i] = total;
+            total+=recv_remote_weights_changes_counts[i];
+        }
+        // make place for elements to be received
+        recv_remote_weights_changes_buf.resize(total);
+    }
+    
+    /**
+     * For each entry in the recv buffer, the GlobalNodeWeight of that entry is added to the corresponding cluster
+    */
+    void calculate_weights(std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight, 
+                            remote_changes_vector &recv_remote_weights_changes_buf, 
+                            int *recv_remote_weights_changes_counts, 
+                            std::map<PEID, std::set<ClusterID>> &must_update, 
+                            std::set<ClusterID> &changed_clusters, ClusterArray &clusters, 
+                            cluster_weight &remote_cluster_weight_portion, 
+                            std::map<PEID, std::set<ClusterID>> &send_weights_buffer_modifications, int size, 
+                            GlobalNodeWeight max_cluster_weight, const DistributedGraph &graph) {
+        int index = 0;
+
+        for (int pe = 0; pe < size; pe++) {
+            for (int i = 0; i < recv_remote_weights_changes_counts[pe]; i++) {
+                remote_weight_change tuple = recv_remote_weights_changes_buf.at(index);
+                ClusterID current_cl_id = std::get<0>(tuple);
+                WeightDelta wd = std::get<1>(tuple);
+                // must update
+                if (must_update.find(pe) == must_update.end()) {
+                    std::set<ClusterID> temp_set;
+                    temp_set.insert(current_cl_id);
+                    must_update.insert(std::make_pair(pe, temp_set));
+                } else {
+                    must_update.at(pe).insert(current_cl_id);
+                }
+                // changed clusters
+                changed_clusters.insert(current_cl_id);
+                // cluster node weight
+                if (cluster_node_weight.find(current_cl_id) == cluster_node_weight.end()) {
+                    // the local part of the cluster is empty
+                    // keep ownership and send changes in weight
+                    // if only one PE is owning nodes of that cluster, this just leads to a little overhead, no problems
+                    cluster_node_weight.insert_or_assign(current_cl_id, wd);
+                    index++;
+                    continue;
+                }
+                if (wd + cluster_node_weight[current_cl_id] > max_cluster_weight) {
+                    // in this case, we actually have to revert cluster assignments
+                    // Idea: communicate that cluster is overweight and separate the cluster into one owned by each PE
+                    // just send an error code instead of Cluster Weight (e.g. Weight greater than max_cluster_weight)
+                    if (send_weights_buffer_modifications.find(pe) == send_weights_buffer_modifications.end()) {
+                        std::set<ClusterID> temp;
+                        temp.insert(current_cl_id);
+                        send_weights_buffer_modifications.insert(std::make_pair(pe, temp));
+                    } else {
+                        send_weights_buffer_modifications.at(pe).insert(current_cl_id);
+                    }
+                    // then calculate the remaining weight of the cluster
+                    cluster_node_weight[current_cl_id] -= (std::get<2>(tuple) - std::get<1>(tuple));
+                    index++;
+                    continue;
+                }
+                GlobalNodeWeight current_weight = cluster_node_weight.at(current_cl_id);
+                cluster_node_weight.insert_or_assign(current_cl_id, wd+current_weight);
+                index++;
+            }
+        }
+    }
+
+    void clean_up_remote_weights_comm(weight_updates &remote_weights_changes, remote_changes_vector &send_remote_weights_buffer, 
+                                        int* send_remote_weights_counts, 
+                                        int* send_remote_weights_displ, remote_changes_vector &recv_remote_weights_buffer) {
+        // remote weights changes
+        for (auto&& [pe, map] : remote_weights_changes) {
+            map.clear();
+        }
+        // send buffer
+        send_remote_weights_buffer.clear();
+        KASSERT(send_remote_weights_buffer.size() == 0);
+        send_remote_weights_counts = {0};
+        send_remote_weights_displ = {0};
+        // receive buffer
+        recv_remote_weights_buffer.clear();
+        KASSERT(recv_remote_weights_buffer.size() == 0);
+    }
+    /**
+     * @deprecated
+    */
     void set_up_weights_comm(weights_vector &send_weights_buffer, weights_vector &recv_weights_buffer, 
                                 int *send_weights_counts, int *send_weights_displ,
                                 int *recv_weights_counts, int *recv_weights_displ,
                                 std::map<PEID, std::vector<NodeID>> &interface_nodes, 
                                 const std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
-                                const std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight, 
                                 const ClusterArray &clusters, int size,
                                 const DistributedGraph &graph) {
-        // fill send buffer with the weights of owned clusters assigned to interface nodes
-        int displ = 0;
+        // calculate interface clusters
+        std::map<PEID, std::set<ClusterID>> interface_clusters;
         for (int pe = 0; pe < size; pe++) {
-            int count = 0;
             if (interface_nodes.find(pe) == interface_nodes.end()) {
                 continue;
             }
             for (NodeID node : interface_nodes.at(pe)) {
-                bool contained = false;
-                ClusterID cluster = clusters[node];
-                for (auto&& [cl_id, a, b] : send_weights_buffer) {
-                    if (!graph.is_owned_global_node(cluster)) {
-                        break;
-                    }
-                    if (cl_id == cluster) {
-                        contained == true;
-                        break;
-                    }
+                if (interface_clusters.find(pe) == interface_clusters.end()) {
+                    std::set<ClusterID> tmp_set;
+                    interface_clusters.insert(std::make_pair(pe, tmp_set));
                 }
-                if (!contained && graph.is_owned_global_node(cluster)) {
+                interface_clusters.at(pe).insert(clusters[node]);
+            }
+        }
+        // TODO maybe needs to send to all PEs (but would be inefficient)
+        // fill send buffer with the weights of owned clusters assigned to interface nodes
+        int displ = 0;
+        for (int pe = 0; pe < size; pe++) {
+            int count = 0;
+            if (interface_clusters.find(pe) == interface_clusters.end()) {
+                continue;
+            }
+            for (ClusterID cluster : interface_clusters.at(pe)) {
+                if (graph.is_owned_global_node(cluster)) {
                     KASSERT(cluster_node_weight.find(cluster) != cluster_node_weight.end());
-                    KASSERT(cluster_edge_weight.find(cluster) != cluster_edge_weight.end());
-                    send_weights_buffer.push_back(std::make_tuple(cluster, cluster_node_weight.at(cluster), cluster_edge_weight.at(cluster)));
+                    send_weights_buffer.push_back(std::make_pair(cluster, cluster_node_weight.at(cluster)));
+                    count++;
+                }
+                            }
+            send_weights_counts[pe] = count;
+            send_weights_displ[pe] = displ;
+            displ+=count;
+        }
+        
+        // set up recv sizes
+        MPI_Alltoall(send_weights_counts, 1, MPI_INT, recv_weights_counts, 1, MPI_INT, graph.communicator());
+        MPI_Barrier(graph.communicator());
+
+        int total = 0;
+        for (int i = 0; i < size; i++) {
+            recv_weights_displ[i] = total;
+            total+=recv_weights_counts[i];
+        }
+        // make place for elements to be received
+        recv_weights_buffer.resize(total);
+    }
+
+    void set_up_weights_comm2(weights_vector &send_weights_buffer, weights_vector &recv_weights_buffer, 
+                                int *send_weights_counts, int *send_weights_displ,
+                                int *recv_weights_counts, int *recv_weights_displ,
+                                std::map<PEID, std::set<ClusterID>> &must_update,
+                                std::set<ClusterID> &changed_clusters,
+                                const std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
+                                std::map<PEID, std::set<ClusterID>> &send_weights_buffer_modifications,
+                                const ClusterArray &clusters, int size, GlobalNodeWeight max_cluster_weight, 
+                                const DistributedGraph &graph) {
+        int displ = 0;
+        // fill send buffer with the weights of the changed clusters, send to all PEs that contain nodes of the cluster
+        // not sending to all ghost nodes neighboring the interface nodes, since they "had the chance to choose this cluster",
+        // but did not cluster to it (therefore they probably won't ever cluster to it)
+        // if they do, let them try and resolve the resulting state
+        for (int pe = 0; pe < size; pe++) {
+            int count = 0;
+            if (must_update.find(pe) == must_update.end()) {
+                continue;
+            }
+            std::set<ClusterID> to_modify;
+            if (send_weights_buffer_modifications.find(pe) != send_weights_buffer_modifications.end()) {
+                to_modify = send_weights_buffer_modifications.at(pe);
+            }
+            for (ClusterID cluster : must_update.at(pe)) {
+                if (to_modify.find(cluster) != to_modify.end()) {
+                    send_weights_buffer.push_back(std::make_pair(cluster, max_cluster_weight+cluster_node_weight.at(cluster)));
+                    count++;
+                    continue;
+                }
+                if (changed_clusters.find(cluster) == changed_clusters.end()) {
+                    continue;
+                }
+                if (graph.is_owned_global_node(cluster)) {
+                    KASSERT(cluster_node_weight.find(cluster) != cluster_node_weight.end());
+                    send_weights_buffer.push_back(std::make_pair(cluster, cluster_node_weight.at(cluster)));
                     count++;
                 }
             }
@@ -482,23 +684,49 @@ namespace kaminpar::dist {
         recv_weights_buffer.resize(total);
     }
 
+    void change_cluster_assignments(ClusterID old_id, ClusterArray &clusters, const DistributedGraph &graph, 
+                                    cluster_weight &remote_cluster_weight_portion, 
+                                    std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
+                                    GlobalNodeWeight weight) {
+        ClusterID new_id;
+        for (auto&& o : graph.nodes()) {
+            if (clusters[o] == old_id) {
+                new_id = graph.local_to_global_node(o);
+                break;
+            }
+        }
+        for (auto&& o : graph.nodes()) {
+            if (clusters[o] == old_id) {
+                clusters[o] = new_id;
+            }
+        }
+        cluster_node_weight.at(old_id) = weight;
+        cluster_node_weight.insert(std::make_pair(new_id, remote_cluster_weight_portion.at(old_id)));
+        remote_cluster_weight_portion.at(old_id) = 0;
+    }
+
     void evaluate_weights(std::unordered_map<ClusterID, GlobalNodeWeight> &cluster_node_weight,
-                            std::unordered_map<ClusterID, GlobalEdgeWeight> &cluster_edge_weight, 
-                            const weights_vector &recv_weights_buffer, 
-                            int *recv_weights_counts, int size) {      
+                            const weights_vector &recv_weights_buffer, ClusterArray &clusters,
+                            const DistributedGraph &graph, cluster_weight &remote_cluster_weight_portion,
+                            int *recv_weights_counts, int size, GlobalNodeWeight max_cluster_weight) {      
         int index = 0;
         for (int pe = 0; pe < size; pe++) {
             for (int i = 0; i < recv_weights_counts[pe]; i++) {
-                std::tuple<ClusterID, GlobalNodeWeight, GlobalEdgeWeight> tuple = recv_weights_buffer.at(index);
-                cluster_node_weight.insert_or_assign(std::get<0>(tuple), std::get<1>(tuple));
-                cluster_edge_weight.insert_or_assign(std::get<0>(tuple), std::get<2>(tuple));
+                weight_change pair = recv_weights_buffer.at(index);
+                if (pair.second > max_cluster_weight) {
+                    // set cluster to local node (cluster was too heavy)
+                    change_cluster_assignments(pair.first, clusters, graph, remote_cluster_weight_portion, 
+                                                cluster_node_weight, pair.second-max_cluster_weight);
+                }
+                cluster_node_weight.insert_or_assign(pair.first, pair.second);
                 index++;
             }
         }
     }
 
     void clean_up_weights_comm(weights_vector &send_weights_buffer, int* send_weights_counts, 
-                                int* send_weights_displ, weights_vector &recv_weights_buffer) {
+                                int* send_weights_displ, weights_vector &recv_weights_buffer, 
+                                std::set<ClusterID> &changed_clusters) {
         // send buffer
         send_weights_buffer.clear();
         KASSERT(send_weights_buffer.size() == 0);
@@ -507,6 +735,9 @@ namespace kaminpar::dist {
         // receive buffer
         recv_weights_buffer.clear();
         KASSERT(recv_weights_buffer.size() == 0);
+        // changed clusters
+        changed_clusters.clear();
+        KASSERT(changed_clusters.size() == 0);
     }
 
     void print_clusters(ClusterArray &clusters, const DistributedGraph &graph) {
@@ -541,13 +772,13 @@ namespace kaminpar::dist {
      * 3.) put all isolated nodes in one cluster
      */
     MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
-
+        SCOPED_TIMER("Start label propagation clustering");
+        START_TIMER("Initialize");
         // clusterIDs of the vertices
         init_clusters(graph.total_n());
 
         // cluster weights of the clusters
         std::unordered_map<ClusterID, GlobalNodeWeight> cluster_node_weight;
-        std::unordered_map<ClusterID, GlobalEdgeWeight> cluster_edge_weight;
 
         // MPI rank and size
         int myrank = mpi::get_comm_rank(graph.communicator());
@@ -557,23 +788,37 @@ namespace kaminpar::dist {
         std::map<PEID, std::vector<NodeID>> interface_nodes = calculate_interface_nodes(graph);
 
         // buffers for cluster-weights communication
+        cluster_weight remote_cluster_weight_portion;
+        weight_updates remote_weights_changes;
+        remote_changes_vector send_remote_weights_changes_buf(0);
+        remote_changes_vector recv_remote_weights_changes_buf(0);
+        std::map<PEID, std::set<ClusterID>> send_weights_buffer_modifications;        // holding PEID, ClusterID pairs to later set them to an invalid number
         weights_vector send_weights_buffer(0);
         weights_vector recv_weights_buffer(0);
+
+        int send_remote_weights_changes_counts[size] = {0};
+        int send_remote_weights_changes_displ[size] = {0};
+        int recv_remote_weights_changes_counts[size] = {0};
+        int recv_remote_weights_changes_displ[size] = {0};
         int send_weights_counts[size] = {0};
         int send_weights_displ[size] = {0};
         int recv_weights_counts[size] = {0};
         int recv_weights_displ[size] = {0};
-        
-        MPI_Datatype weights_update_type = mpi::type::get<std::tuple<ClusterID, GlobalNodeWeight, GlobalEdgeWeight>>();
-        
-        // adjacent PEs (put in hashmap to ensure uniqueness of PEs)
-        std::unordered_map<PEID, PEID> adj_PEs;
+
+        MPI_Datatype weights_remote_update_type = mpi::type::get<remote_weight_change>();
+        MPI_Datatype weights_update_type = mpi::type::get<weight_change>();
+
+        std::map<PEID, std::set<ClusterID>> must_update;
+        std::set<ClusterID> changed_clusters;
+
+        // adjacent PEs (put in set to ensure uniqueness of PEs)
+        std::set<PEID> adj_PEs;
 
         // find all adjacent PEs
         for (NodeID u : graph.all_nodes()) {
             if (graph.is_ghost_node(u)) {
                 int pe = graph.ghost_owner(u);
-                adj_PEs.insert(std::make_pair(pe,pe));
+                adj_PEs.insert(pe);
             }
         }
 
@@ -590,7 +835,7 @@ namespace kaminpar::dist {
 
         // vectors for PEs
         int z = 0;
-        for (auto&& [peid, _] : adj_PEs) {
+        for (auto&& peid : adj_PEs) {
             update_vector temp(0);
             send_buffers.insert(std::make_pair(peid, temp));
             z++;
@@ -602,52 +847,106 @@ namespace kaminpar::dist {
             ClusterID g_id = graph.local_to_global_node(u);
             get_clusters()[u] = g_id;
             cluster_node_weight.insert(std::make_pair(g_id, graph.node_weight(u)));
-            cluster_edge_weight.insert(std::make_pair(g_id, 0));
+
         }
         KASSERT(cluster_node_weight.size() == graph.total_n());
-        KASSERT(cluster_edge_weight.size() == graph.total_n());
 
         // communicate labels ()
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
-        int global_iterations = 3;
-        for (int i = 0; i < global_iterations; i++) {
-            // local cluster iteration
-            cluster_iteration(graph, get_clusters(), cluster_node_weight, cluster_edge_weight, send_buffers, max_cluster_weight);
-
-            // communicate labels
-            set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
-            set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph);
-     
-            MPI_Alltoallv(&send_buffer[0], send_counts, send_displ, update_type, &recv_buffer[0], recv_counts, 
-                            recv_displ, update_type, graph.communicator());
-
-            mpi::barrier(graph.communicator());
-
-            // evaluate recv_buffer content
-            evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph);
-
-            // exchange weights for ghost nodes
-            // need to send information about interface nodes' cluster weights
-            // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
-            set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
-                                    recv_weights_counts, recv_weights_displ, interface_nodes, cluster_node_weight, cluster_edge_weight,
-                                    get_clusters(), size, graph);
-            
-            MPI_Alltoallv(&send_weights_buffer[0], send_weights_counts, send_weights_displ, weights_update_type, &recv_weights_buffer[0], 
-                            recv_weights_counts, recv_weights_displ, weights_update_type, graph.communicator());
-            mpi::barrier(graph.communicator());
-
-            // evaluate
-            evaluate_weights(cluster_node_weight, cluster_edge_weight, recv_weights_buffer, recv_weights_counts, size);
-
-            clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer);
-
-            // clean up containers
-            clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
+        // set up loop
+        int num_batches = std::max(8, 128/size);
+        int batchsize = (graph.n()/num_batches) + 1;
+        if (batchsize == 0) {
+            batchsize = 1;
+            num_batches = graph.n();
         }
+        int global_iterations = 3;
+        STOP_TIMER();
+        
+        for (int i = 0; i < global_iterations; i++) {
+            START_TIMER("Cluster iteration");
+            int start_node = 0;
+            for (int batch = 0; batch < num_batches; batch++) {
+                START_TIMER("Compute batch");
+                start_node = batch*batchsize;
+
+                START_TIMER("Compute new cluster assignments");
+                // local cluster iteration
+                cluster_iteration(graph, get_clusters(), cluster_node_weight, remote_weights_changes, send_buffers, 
+                                    remote_cluster_weight_portion, max_cluster_weight, start_node, batchsize);
+                STOP_TIMER();
+
+                START_TIMER("Communicate labels");
+                // communicate labels
+                set_up_alltoallv_send(send_buffers, send_buffer, send_counts, send_displ);
+                set_up_alltoallv_recv(recv_counts, recv_displ, recv_buffer, send_counts, graph);
+     
+                MPI_Alltoallv(&send_buffer[0], send_counts, send_displ, update_type, &recv_buffer[0], recv_counts, 
+                                recv_displ, update_type, graph.communicator());
+
+                mpi::barrier(graph.communicator());
+
+                // evaluate recv_buffer content
+                evaluate_recv_buffer(recv_buffer, recv_counts, recv_displ, get_clusters(), size, myrank, graph, remote_weights_changes);
+                STOP_TIMER();
+
+                START_TIMER("Communicate weight changes to remote clusters");
+                // send the changes in remote clusters to the corresponding owning PEs
+                set_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, recv_remote_weights_changes_buf, 
+                                            remote_cluster_weight_portion,
+                                            send_remote_weights_changes_counts, send_remote_weights_changes_displ,
+                                            recv_remote_weights_changes_counts, recv_remote_weights_changes_displ, 
+                                            size, graph);
+            
+                MPI_Alltoallv(&send_remote_weights_changes_buf[0], send_remote_weights_changes_counts, 
+                                send_remote_weights_changes_displ, weights_remote_update_type, &recv_remote_weights_changes_buf[0], 
+                                recv_remote_weights_changes_counts, recv_remote_weights_changes_displ, weights_remote_update_type, 
+                                graph.communicator());
+                mpi::barrier(graph.communicator());
+
+                // evaluate
+                calculate_weights(cluster_node_weight, recv_remote_weights_changes_buf, recv_remote_weights_changes_counts, 
+                                    must_update, changed_clusters, get_clusters(), remote_cluster_weight_portion, 
+                                    send_weights_buffer_modifications, size, max_cluster_weight, graph);
+
+                clean_up_remote_weights_comm(remote_weights_changes, send_remote_weights_changes_buf, send_remote_weights_changes_counts, 
+                                                send_remote_weights_changes_displ, recv_remote_weights_changes_buf);
+                STOP_TIMER();
+
+                START_TIMER("Communicate relevant cluster weights");
+                // exchange weights for ghost nodes
+                // need to send information about interface nodes' cluster weights
+                // can naively update weights for ghost nodes, since the sent weights are guaranteed to be the newest data
+                set_up_weights_comm2(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+                                        recv_weights_counts, recv_weights_displ, must_update,
+                                        changed_clusters, cluster_node_weight, send_weights_buffer_modifications, 
+                                        get_clusters(), size, max_cluster_weight, graph);
+                /*set_up_weights_comm(send_weights_buffer, recv_weights_buffer, send_weights_counts, send_weights_displ,
+                                        recv_weights_counts, recv_weights_displ, interface_nodes, 
+                                        cluster_node_weight, get_clusters(), size, graph);*/
+            
+                MPI_Alltoallv(&send_weights_buffer[0], send_weights_counts, send_weights_displ, weights_update_type, &recv_weights_buffer[0], 
+                                recv_weights_counts, recv_weights_displ, weights_update_type, graph.communicator());
+                mpi::barrier(graph.communicator());
+
+                // evaluate
+                evaluate_weights(cluster_node_weight, recv_weights_buffer, get_clusters(), graph, remote_cluster_weight_portion, 
+                                    recv_weights_counts, size, max_cluster_weight);
+
+                clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer, changed_clusters);
+                STOP_TIMER();
+
+                // clean up containers
+                clean_up_iteration(send_buffers, send_buffer, send_counts, send_displ, recv_buffer);
+                STOP_TIMER();
+            }
+            STOP_TIMER();
+        }
+        START_TIMER("Cluster isolated nodes");
         // cluster isolated nodes
         cluster_isolated_locally(graph, get_clusters(), cluster_node_weight, max_cluster_weight);
+        STOP_TIMER();
 
         //return clusterarray
         return get_clusters();
