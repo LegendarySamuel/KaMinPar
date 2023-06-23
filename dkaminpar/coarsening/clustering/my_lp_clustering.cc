@@ -726,7 +726,8 @@ namespace kaminpar::dist {
 
     void clean_up_weights_comm(weights_vector &send_weights_buffer, int* send_weights_counts, 
                                 int* send_weights_displ, weights_vector &recv_weights_buffer, 
-                                std::set<ClusterID> &changed_clusters) {
+                                std::set<ClusterID> &changed_clusters, 
+                                std::map<PEID, std::set<ClusterID>> &send_weights_buffer_modifications) {
         // send buffer
         send_weights_buffer.clear();
         KASSERT(send_weights_buffer.size() == 0);
@@ -738,6 +739,8 @@ namespace kaminpar::dist {
         // changed clusters
         changed_clusters.clear();
         KASSERT(changed_clusters.size() == 0);
+        send_weights_buffer_modifications.clear();
+        KASSERT(send_weights_buffer_modifications.size() == 0);
     }
 
     void print_clusters(ClusterArray &clusters, const DistributedGraph &graph) {
@@ -934,7 +937,8 @@ namespace kaminpar::dist {
                 evaluate_weights(cluster_node_weight, recv_weights_buffer, get_clusters(), graph, remote_cluster_weight_portion, 
                                     recv_weights_counts, size, max_cluster_weight);
 
-                clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer, changed_clusters);
+                clean_up_weights_comm(send_weights_buffer, send_weights_counts, send_weights_displ, recv_weights_buffer, 
+                                        changed_clusters, send_weights_buffer_modifications);
                 STOP_TIMER();
 
                 // clean up containers
