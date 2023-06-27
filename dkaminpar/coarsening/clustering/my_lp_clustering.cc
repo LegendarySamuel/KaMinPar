@@ -864,8 +864,8 @@ namespace kaminpar::dist {
         MPI_Datatype update_type = mpi::type::get<cluster_update>();
 
         // set up loop
-        int num_batches = std::max(8, 128/size);
-        int batchsize = (graph.n()/num_batches) + 1;
+        int num_batches = std::max(8, 128/size) + 1;
+        int batchsize = (graph.n()/num_batches);
         if (batchsize == 0) {
             batchsize = 1;
             num_batches = graph.n();
