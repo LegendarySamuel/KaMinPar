@@ -38,6 +38,7 @@
 #include "dkaminpar/coarsening/clustering/local_lp_clustering.h"
 #include "dkaminpar/coarsening/clustering/noop_clustering.h"
 #include "dkaminpar/coarsening/clustering/my_lp_clustering.h"
+#include "dkaminpar/coarsening/clustering/async_global_lp_clustering.h"
 
 namespace kaminpar::dist::factory {
 std::unique_ptr<Partitioner> create_partitioner(const Context &ctx, const DistributedGraph &graph) {
@@ -126,6 +127,9 @@ create_global_clustering_algorithm(const Context &ctx) {
 
   case GlobalClusteringAlgorithm::MY_LP:
     return std::make_unique<MyLPClustering>(ctx);
+
+  case GlobalClusteringAlgorithm::AGLP:
+    return std::make_unique<AsyncGlobalLPClustering>(ctx);
   }
 
   __builtin_unreachable();
