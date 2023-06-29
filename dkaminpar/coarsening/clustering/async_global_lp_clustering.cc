@@ -118,6 +118,7 @@ public:
     STOP_TIMER();
   }
 
+  // TODO async
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -132,10 +133,28 @@ public:
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       GlobalNodeID global_num_moved_nodes = 0;
-      for (int chunk = 0; chunk < num_chunks; ++chunk) {
+      const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
+      // first chunk's computation
+      NodeID local_num_moved_nodes = process_chunk_computation(from, to);
+      // loop starts with first communication and second computation
+      for (int chunk = 1; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
-        global_num_moved_nodes += process_chunk(from, to);
+        const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
+        NodeID fr = from;
+        NodeID t = to;
+        NodeID prev_fr = prev_from;
+        NodeID prev_t = prev_to;
+        tbb::parallel_invoke([fr, t, &local_num_moved_nodes, this]() {
+                                  local_num_moved_nodes = process_chunk_computation(fr, t);
+                                }, 
+                              [prev_fr, prev_t, local_num_moved_nodes, &global_num_moved_nodes, this]() {
+                                  global_num_moved_nodes += process_chunk_communication(prev_fr, prev_t, local_num_moved_nodes);
+                                });
       }
+      // last chunk's communication
+      const auto [border_from, border_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
+      global_num_moved_nodes += process_chunk_communication(border_from, border_to, local_num_moved_nodes);
+
       if (global_num_moved_nodes == 0) {
         break;
       }
@@ -513,6 +532,39 @@ private:
       }
     });
     STOP_TIMER();
+  }
+
+  // TODO calculation needs to evaluate buffer and calculate iteration
+  NodeID process_chunk_computation(const NodeID from, const NodeID to) {
+    START_TIMER("Chunk computation");
+    const NodeID local_num_moved_nodes = perform_iteration(from, to);
+    STOP_TIMER();
+
+    if (_c_ctx.global_lp.merge_singleton_clusters) {
+      cluster_isolated_nodes(from, to);
+    }
+
+    return local_num_moved_nodes;
+  }
+
+  // TODO communication, write into buffer
+  GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
+    mpi::barrier(_graph->communicator());
+    
+    START_TIMER("Chunk communication");
+
+    const GlobalNodeID global_num_moved_nodes =
+        mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
+
+    control_cluster_weights(from, to);
+
+    if (global_num_moved_nodes > 0) {
+      synchronize_ghost_node_clusters(from, to);
+    }
+    
+    STOP_TIMER();
+
+    return global_num_moved_nodes;
   }
 
   GlobalNodeID process_chunk(const NodeID from, const NodeID to) {

@@ -30,5 +30,6 @@ public:
 
 private:
   std::unique_ptr<class AsyncGlobalLPClusteringImpl> _impl;
+friend AsyncGlobalLPClusteringImpl;
 };
 } // namespace kaminpar::dist
