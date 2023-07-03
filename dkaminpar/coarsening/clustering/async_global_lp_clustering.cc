@@ -131,11 +131,31 @@ public:
 
     const int num_chunks = _c_ctx.global_lp.compute_num_chunks(_ctx.parallel);
 
+    bool has_iterated = false;
+
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
-      // first chunk's computation
-      NodeID local_num_moved_nodes = process_chunk_computation(from, to);
+      const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
+
+      NodeID local_num_moved_nodes = 0;
+
+      if (!has_iterated) {
+        // first chunk's computation
+        local_num_moved_nodes = process_chunk_computation(from, to);
+      } else {
+        // previous iteration's last chunk's communication and first chunk communication of current iteration
+        NodeID fr = from;
+        NodeID t = to;
+        NodeID prev_last_fr = from;
+        NodeID prev_last_t = to;
+        tbb::parallel_invoke([fr, t, &local_num_moved_nodes, this]() {
+                                  local_num_moved_nodes = process_chunk_computation(fr, t);
+                                }, 
+                              [prev_last_fr, prev_last_t, local_num_moved_nodes, &global_num_moved_nodes, this]() {
+                                  global_num_moved_nodes += process_chunk_communication(prev_last_fr, prev_last_t, local_num_moved_nodes);
+                                });
+      }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
@@ -151,9 +171,11 @@ public:
                                   global_num_moved_nodes += process_chunk_communication(prev_fr, prev_t, local_num_moved_nodes);
                                 });
       }
+      has_iterated = true;
       // last chunk's communication
-      const auto [border_from, border_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
-      global_num_moved_nodes += process_chunk_communication(border_from, border_to, local_num_moved_nodes);
+      if (iteration == _max_num_iterations - 1) {
+        global_num_moved_nodes += process_chunk_communication(last_from, last_to, local_num_moved_nodes);
+      }
 
       if (global_num_moved_nodes == 0) {
         break;
