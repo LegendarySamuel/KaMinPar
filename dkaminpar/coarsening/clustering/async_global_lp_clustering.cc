@@ -145,30 +145,22 @@ public:
         local_num_moved_nodes = process_chunk_computation(from, to);
       } else {
         // previous iteration's last chunk's communication and first chunk communication of current iteration
-        NodeID fr = from;
-        NodeID t = to;
-        NodeID prev_last_fr = from;
-        NodeID prev_last_t = to;
-        tbb::parallel_invoke([fr, t, &local_num_moved_nodes, this]() {
-                                  local_num_moved_nodes = process_chunk_computation(fr, t);
+        tbb::parallel_invoke([from = from, to = to, &local_num_moved_nodes, this]() {
+                                  local_num_moved_nodes = process_chunk_computation(from, to);
                                 }, 
-                              [prev_last_fr, prev_last_t, local_num_moved_nodes, &global_num_moved_nodes, this]() {
-                                  global_num_moved_nodes += process_chunk_communication(prev_last_fr, prev_last_t, local_num_moved_nodes);
+                              [prev_last_from = last_from, prev_last_to = last_to, local_num_moved_nodes, &global_num_moved_nodes, this]() {
+                                  global_num_moved_nodes += process_chunk_communication(prev_last_from, prev_last_to, local_num_moved_nodes);
                                 });
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
-        NodeID fr = from;
-        NodeID t = to;
-        NodeID prev_fr = prev_from;
-        NodeID prev_t = prev_to;
-        tbb::parallel_invoke([fr, t, &local_num_moved_nodes, this]() {
-                                  local_num_moved_nodes = process_chunk_computation(fr, t);
+        tbb::parallel_invoke([from = from, to = to, &local_num_moved_nodes, this]() {
+                                  local_num_moved_nodes = process_chunk_computation(from, to);
                                 }, 
-                              [prev_fr, prev_t, local_num_moved_nodes, &global_num_moved_nodes, this]() {
-                                  global_num_moved_nodes += process_chunk_communication(prev_fr, prev_t, local_num_moved_nodes);
+                              [prev_from = prev_from, prev_to = prev_to, local_num_moved_nodes, &global_num_moved_nodes, this]() {
+                                  global_num_moved_nodes += process_chunk_communication(prev_from, prev_to, local_num_moved_nodes);
                                 });
       }
       has_iterated = true;
