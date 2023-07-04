@@ -132,7 +132,7 @@ public:
     const int num_chunks = _c_ctx.global_lp.compute_num_chunks(_ctx.parallel);
 
     bool has_iterated = false;
-
+    //DISABLE_TIMERS();
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
@@ -173,7 +173,7 @@ public:
         break;
       }
     }
-
+    //ENABLE_TIMERS();
     return clusters();
   }
 
@@ -551,7 +551,10 @@ private:
   // TODO calculation needs to evaluate buffer and calculate iteration
   NodeID process_chunk_computation(const NodeID from, const NodeID to) {
     START_TIMER("Chunk computation");
+    double start_time = MPI_Wtime();
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
+    double end_time = MPI_Wtime();
+    std::cout << "Single chunk computation: " << end_time - start_time << std::endl;
     STOP_TIMER();
 
     if (_c_ctx.global_lp.merge_singleton_clusters) {
@@ -566,15 +569,20 @@ private:
     mpi::barrier(_graph->communicator());
     
     START_TIMER("Chunk communication");
+    double start_time = MPI_Wtime();
 
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
 
-    control_cluster_weights(from, to);
+    // ignoring weight constraint
+    //control_cluster_weights(from, to);
 
     if (global_num_moved_nodes > 0) {
       synchronize_ghost_node_clusters(from, to);
     }
+
+    double end_time = MPI_Wtime();
+    std::cout << "Single chunk communication: " << end_time - start_time << std::endl;
     
     STOP_TIMER();
 
@@ -634,23 +642,27 @@ private:
               KASSERT(!_graph->is_owned_global_node(gnode));
 
               const NodeID lnode = _graph->global_to_local_node(gnode);
-              const NodeWeight weight = _graph->node_weight(lnode);
+              
+              // ignoring weight constraint
+              /*const NodeWeight weight = _graph->node_weight(lnode);
 
-              const GlobalNodeID old_gcluster = cluster(lnode);
+              const GlobalNodeID old_gcluster = cluster(lnode);*/
 
               // If we synchronize the weights of clusters with local
               // changes, we already have the right weight including ghost
               // vertices --> only update weight if we did not get an update
 
-              if (!should_sync_cluster_weights() ||
+              // ignoring weight constraint
+              /*if (!should_sync_cluster_weights() ||
                   weight_delta_handle.find(old_gcluster + 1) == weight_delta_handle.end()) {
                 change_cluster_weight(old_gcluster, -weight, true);
-              }
+              }*/
               NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
-              if (!should_sync_cluster_weights() ||
+              // ignoring weight constraint
+              /*if (!should_sync_cluster_weights() ||
                   weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
                 change_cluster_weight(new_gcluster, weight, false);
-              }
+              }*/
             }
           });
         }
