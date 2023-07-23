@@ -134,6 +134,7 @@ public:
     bool has_iterated = false;
     //DISABLE_TIMERS();
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
+      mpi::barrier(_graph->communicator());
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
@@ -162,6 +163,8 @@ std::cout << "Has Iterated" << std::endl;
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
+        mpi::barrier(_graph->communicator());
+// problem in this block -start
 std::cout << "Loop " << chunk << std::endl;
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
@@ -170,6 +173,7 @@ std::cout << "Loop " << chunk << std::endl;
                                 });
         global_num_moved_nodes += process_chunk_communication(prev_from, prev_to, local_num_moved_nodes);
         comp_thread.join();
+// problem in this block -end
         /*tbb::parallel_invoke([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 }, 
@@ -581,7 +585,7 @@ private:
   // TODO communication, write into buffer
   GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
 std::cout << "before barrier" << std::endl;
-    mpi::barrier(_graph->communicator());
+    //mpi::barrier(_graph->communicator());
 std::cout << "after barrier" << std::endl;
     
     START_TIMER("Chunk communication");
@@ -632,7 +636,7 @@ std::cout << "allreduce" << std::endl;
     // TODO send _changed_label asynchronously
   void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
 std::cout << "before barrier 2" << std::endl;
-    mpi::barrier(_graph->communicator());
+    //mpi::barrier(_graph->communicator());
 std::cout << "after barrier 2" << std::endl;
 
     SCOPED_TIMER("Synchronize ghost node clusters");
