@@ -635,7 +635,6 @@ private:
       ClusterID new_gcluster;
     };
 
-std::cout << "sparse all to all" << std::endl;
     mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
         *_graph,
         from,
