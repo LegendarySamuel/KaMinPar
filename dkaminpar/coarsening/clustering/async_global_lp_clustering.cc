@@ -566,7 +566,9 @@ private:
     double start_time = MPI_Wtime();
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
     double end_time = MPI_Wtime();
-    std::cout << "Single chunk computation: " << end_time - start_time << std::endl;
+    std::stringstream output;
+    output << "Single chunk computation: " << end_time - start_time << std::endl;
+    std::cout << output.str();
     STOP_TIMER();
 
     if (_c_ctx.global_lp.merge_singleton_clusters) {
@@ -594,7 +596,9 @@ private:
     }
 
     double end_time = MPI_Wtime();
-    std::cout << "Single chunk communication: " << end_time - start_time << std::endl;
+    std::stringstream output;
+    output << "Single chunk communication: " << end_time - start_time << std::endl;
+    std::cout << output.str();
     
     STOP_TIMER();
 
