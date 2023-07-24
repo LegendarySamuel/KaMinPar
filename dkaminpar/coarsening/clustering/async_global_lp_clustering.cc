@@ -142,7 +142,6 @@ public:
       NodeID local_num_moved_nodes = 0;
 
       if (!has_iterated) {
-std::cout << "First Iteration" << std::endl;
         // first chunk's computation
         local_num_moved_nodes = process_chunk_computation(from, to);
         has_iterated = true;
@@ -153,7 +152,6 @@ std::cout << "First Iteration" << std::endl;
                                 });
         global_num_moved_nodes += process_chunk_communication(last_from, last_to, local_num_moved_nodes);
         comp_thread.join();
-std::cout << "Has Iterated" << std::endl;
         /*tbb::parallel_invoke([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 }, 
@@ -164,8 +162,6 @@ std::cout << "Has Iterated" << std::endl;
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
         mpi::barrier(_graph->communicator());
-// problem in this block -start
-std::cout << "Loop " << chunk << std::endl;
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
@@ -173,7 +169,6 @@ std::cout << "Loop " << chunk << std::endl;
                                 });
         global_num_moved_nodes += process_chunk_communication(prev_from, prev_to, local_num_moved_nodes);
         comp_thread.join();
-// problem in this block -end
         /*tbb::parallel_invoke([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 }, 
@@ -181,7 +176,6 @@ std::cout << "Loop " << chunk << std::endl;
                                   global_num_moved_nodes += process_chunk_communication(prev_from, prev_to, local_num_moved_nodes);
                                 });*/
       }
-std::cout << "Ending Iteration" << std::endl;
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
         global_num_moved_nodes += process_chunk_communication(last_from, last_to, local_num_moved_nodes);
@@ -572,7 +566,7 @@ private:
     double start_time = MPI_Wtime();
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
     double end_time = MPI_Wtime();
-    //std::cout << "Single chunk computation: " << end_time - start_time << std::endl;
+    std::cout << "Single chunk computation: " << end_time - start_time << std::endl;
     STOP_TIMER();
 
     if (_c_ctx.global_lp.merge_singleton_clusters) {
@@ -584,14 +578,11 @@ private:
 
   // TODO communication, write into buffer
   GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
-std::cout << "before barrier" << std::endl;
-    //mpi::barrier(_graph->communicator());
-std::cout << "after barrier" << std::endl;
+//mpi::barrier(_graph->communicator());
     
     START_TIMER("Chunk communication");
     double start_time = MPI_Wtime();
 
-std::cout << "allreduce" << std::endl;
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
 
@@ -635,9 +626,7 @@ std::cout << "allreduce" << std::endl;
 
     // TODO send _changed_label asynchronously
   void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
-std::cout << "before barrier 2" << std::endl;
-    //mpi::barrier(_graph->communicator());
-std::cout << "after barrier 2" << std::endl;
+//mpi::barrier(_graph->communicator());
 
     SCOPED_TIMER("Synchronize ghost node clusters");
 
