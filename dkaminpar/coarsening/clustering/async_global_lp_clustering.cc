@@ -584,10 +584,14 @@ private:
     
     START_TIMER("Chunk communication");
     double start_time = MPI_Wtime();
-
+    double mpi_time_start = MPI_Wtime();
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
-
+    double mpi_time_end = MPI_Wtime();
+    std::stringstream mpi_time_output;
+    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
+    std::cout << mpi_time_output.str();
+    
     // ignoring weight constraint
     //control_cluster_weights(from, to);
 
@@ -639,6 +643,7 @@ private:
       ClusterID new_gcluster;
     };
 
+    double mpi_time_start = MPi_Wtime();
     mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
         *_graph,
         from,
@@ -683,6 +688,10 @@ private:
           });
         }
     );
+    double mpi_time_end = MPI_Wtime();
+    std::stringstream mpi_time_output;
+    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
+    std::cout << mpi_time_output.str();
 
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
