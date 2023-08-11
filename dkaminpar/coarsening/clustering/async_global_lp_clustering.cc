@@ -643,7 +643,7 @@ private:
       ClusterID new_gcluster;
     };
 
-    double mpi_time_start = MPi_Wtime();
+    double mpi_time_start = MPI_Wtime();
     mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
         *_graph,
         from,
