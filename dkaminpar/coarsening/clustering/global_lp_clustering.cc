@@ -555,9 +555,8 @@ int interfacesize = 0;
 for (NodeID u = from; u < to; ++u) {
   if (_changed_label[u] == kInvalidGlobalNodeID) {
     continue;
-  } else {
-    ++allsize;
   }
+  ++allsize;
   for (const auto [e, v] : (*_graph).neighbors(u)) {
     if (!(*_graph).is_ghost_node(v)) {
       continue;
