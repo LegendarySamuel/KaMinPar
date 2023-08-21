@@ -549,6 +549,29 @@ private:
       ClusterID new_gcluster;
     };
 
+// ouputting the number of changed labels in the array
+int allsize = 0;
+int interfacesize = 0;
+for (NodeID u = from; u < to; ++u) {
+  if (_changed_label[u] == kInvalidGlobalNodeID) {
+    continue;
+  } else {
+    ++allsize;
+  }
+  for (const auto [e, v] : (*_graph).neighbors(u)) {
+    if (!(*_graph).is_ghost_node(v)) {
+      continue;
+    }
+    ++interfacesize;
+  }
+}
+std::stringstream output;
+output << "_changed_label all: " << allsize << std::endl;
+std::cout << output.str();
+std::stringstream interfaceoutput;
+interfaceoutput << "_changed_label interface: " << interfacesize << std::endl;
+std::cout << interfaceoutput.str();
+
     mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
         *_graph,
         from,
