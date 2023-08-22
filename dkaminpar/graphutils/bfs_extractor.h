@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Algorithm to extract a region of the graph using a BFS search.
+ *
  * @file:   bfs_extractor.h
  * @author: Daniel Seemaier
  * @date:   23.08.2022
- * @brief:  Algorithm to extract a region of the graph using a BFS search.
  ******************************************************************************/
 #pragma once
 
@@ -14,14 +15,14 @@
 
 #include "dkaminpar/datastructures/distributed_graph.h"
 #include "dkaminpar/datastructures/distributed_partitioned_graph.h"
-#include "dkaminpar/definitions.h"
+#include "dkaminpar/dkaminpar.h"
 
 #include "kaminpar/datastructures/graph.h"
 
 #include "common/datastructures/fast_reset_array.h"
 #include "common/datastructures/marker.h"
-#include "common/noinit_vector.h"
-#include "common/preallocated_vector.h"
+#include "common/datastructures/noinit_vector.h"
+#include "common/datastructures/preallocated_vector.h"
 
 namespace kaminpar::dist::graph {
 class BfsExtractor {
@@ -127,13 +128,13 @@ private:
   const DistributedGraph *_graph = nullptr;
   const DistributedPartitionedGraph *_p_graph = nullptr;
 
-  PEID _max_hops{std::numeric_limits<PEID>::max()};
-  GlobalNodeID _max_radius{std::numeric_limits<GlobalNodeID>::max()};
-  GlobalEdgeID _high_degree_threshold{std::numeric_limits<GlobalEdgeID>::max()};
-  HighDegreeStrategy _high_degree_strategy{HighDegreeStrategy::TAKE_ALL};
-  ExteriorStrategy _exterior_strategy{ExteriorStrategy::EXCLUDE};
+  PEID _max_hops = std::numeric_limits<PEID>::max();
+  GlobalNodeID _max_radius = std::numeric_limits<GlobalNodeID>::max();
+  GlobalEdgeID _high_degree_threshold = std::numeric_limits<GlobalEdgeID>::max();
+  HighDegreeStrategy _high_degree_strategy = HighDegreeStrategy::TAKE_ALL;
+  ExteriorStrategy _exterior_strategy = ExteriorStrategy::EXCLUDE;
 
-  NoinitVector<EdgeWeight> _external_degrees{};
+  NoinitVector<EdgeWeight> _external_degrees;
 
   Marker<> _finished_pe_search{
       static_cast<std::size_t>(mpi::get_comm_size(_graph->communicator()))};

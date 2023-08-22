@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Static distributed graph data structure.
+ *
  * @file:   distributed_graph.h
  * @author: Daniel Seemaier
  * @date:   27.10.2021
- * @brief:  Static distributed graph data structure.
  ******************************************************************************/
 #pragma once
 
@@ -207,6 +208,11 @@ public:
     KASSERT(_ghost_owner[u - n()] >= 0);
     KASSERT(_ghost_owner[u - n()] < mpi::get_comm_size(communicator()));
     return _ghost_owner[u - n()];
+  }
+
+  [[nodiscard]] inline NodeID map_foreign_node(const NodeID their_lnode, const PEID owner) const {
+    const GlobalNodeID gnode = static_cast<GlobalNodeID>(their_lnode + offset_n(owner));
+    return global_to_local_node(gnode);
   }
 
   [[nodiscard]] inline GlobalNodeID local_to_global_node(const NodeID local_u) const {

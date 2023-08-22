@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Configuration presets.
+ *
  * @file:   presets.cc
  * @author: Daniel Seemaier
  * @date:   15.10.2022
- * @brief:  Configuration presets.
  ******************************************************************************/
 #include "dkaminpar/presets.h"
 
@@ -68,7 +69,6 @@ Context create_default_context() {
                       .total_num_chunks = 128,
                       .fixed_num_chunks = 0,
                       .min_num_chunks = 8,
-                      .ignore_ghost_nodes = false, // unused
                       .keep_ghost_clusters = false,
                       .scale_chunks_with_threads = false,
                       .sync_cluster_weights = true,
@@ -92,22 +92,16 @@ Context create_default_context() {
               .local_lp =
                   {
                       .num_iterations = 5,
-                      .passive_high_degree_threshold = 1'000'000, // unused
                       .active_high_degree_threshold = 1'000'000,
                       .max_num_neighbors = kInvalidNodeID,
-                      .merge_singleton_clusters = true,
+                      .merge_singleton_clusters = false,
                       .merge_nonadjacent_clusters_threshold = 0.5,
-                      .total_num_chunks = 0, // unused
-                      .fixed_num_chunks = 0, // unused
-                      .min_num_chunks = 0,   // unused
-                      .ignore_ghost_nodes = false,
+                      .ignore_ghost_nodes = true,
                       .keep_ghost_clusters = false,
-                      .scale_chunks_with_threads = false, // unused
                   },
               .contraction_limit = 2000,
               .cluster_weight_limit = shm::ClusterWeightLimit::EPSILON_BLOCK_WEIGHT,
               .cluster_weight_multiplier = 1.0,
-              .contraction_algorithm = ContractionAlgorithm::DEFAULT,
               .max_cnode_imbalance = 1.1,
               .migrate_cnode_prefix = true,
               .force_perfect_cnode_balance = false,
@@ -120,9 +114,9 @@ Context create_default_context() {
       .refinement =
           {
               .algorithms =
-                  {KWayRefinementAlgorithm::GREEDY_BALANCER,
-                   KWayRefinementAlgorithm::LP,
-                   KWayRefinementAlgorithm::GREEDY_BALANCER},
+                  {RefinementAlgorithm::GREEDY_NODE_BALANCER,
+                   RefinementAlgorithm::BATCHED_LP,
+                   RefinementAlgorithm::GREEDY_NODE_BALANCER},
               .refine_coarsest_level = false,
               .lp =
                   {
@@ -154,6 +148,8 @@ Context create_default_context() {
               .fm =
                   {
                       .alpha = 1.0,
+
+                      // -- @todo remove --
                       .radius = 3,
                       .pe_radius = 2,
                       .overlap_regions = false,
@@ -162,6 +158,23 @@ Context create_default_context() {
                       .premove_locally = true,
                       .bound_degree = 0,
                       .contract_border = false,
+
+                      // -- new parameters --
+                      .max_hops = 1,
+                      .max_radius = 2,
+
+                      .num_global_iterations = 10,
+                      .num_local_iterations = 1,
+
+                      .revert_local_moves_after_batch = true,
+                      .rebalance_after_each_global_iteration = true,
+                      .rebalance_after_refinement = false,
+                      .balancing_algorithm = RefinementAlgorithm::GREEDY_NODE_BALANCER,
+
+                      .rollback_deterioration = true,
+
+                      .use_abortion_threshold = true,
+                      .abortion_threshold = 0.999,
                   },
               .greedy_balancer =
                   {
@@ -171,6 +184,23 @@ Context create_default_context() {
                       .enable_fast_balancing = false,
                       .fast_balancing_threshold = 0.1,
                   },
+              .cluster_balancer =
+                  {
+                      .max_num_rounds = std::numeric_limits<int>::max(),
+                      .enable_sequential_balancing = true,
+                      .seq_num_nodes_per_block = 5,
+                      .seq_full_pq = true,
+                      .enable_parallel_balancing = true,
+                      .parallel_threshold = 0.1,
+                      .par_num_dicing_attempts = 0,
+                      .par_accept_imbalanced = true,
+                      .cluster_size_strategy = ClusterSizeStrategy::ONE,
+                      .cluster_size_multiplier = 1.0,
+                      .cluster_strategy = ClusterStrategy::GREEDY_BATCH_PREFIX,
+                      .cluster_rebuild_interval = 0,
+                      .switch_to_sequential_after_stallmate = true,
+                      .switch_to_singleton_after_stallmate = true,
+                  },
               .jet =
                   {
                       .num_iterations = 12,
@@ -179,6 +209,12 @@ Context create_default_context() {
                       .interpolate_c = false,
                       .use_abortion_threshold = true,
                       .abortion_threshold = 0.999,
+                      .balancing_algorithm = RefinementAlgorithm::GREEDY_NODE_BALANCER,
+                  },
+              .jet_balancer =
+                  {
+                      .num_weak_iterations = 2,
+                      .num_strong_iterations = 1,
                   },
           },
       .debug = {
@@ -192,18 +228,20 @@ Context create_strong_context() {
   ctx.initial_partitioning.kaminpar = shm::create_strong_context();
   ctx.coarsening.global_lp.num_iterations = 5;
   ctx.refinement.algorithms = {
-      KWayRefinementAlgorithm::GREEDY_BALANCER,
-      KWayRefinementAlgorithm::LP,
-      KWayRefinementAlgorithm::JET};
+      RefinementAlgorithm::GREEDY_NODE_BALANCER,
+      RefinementAlgorithm::BATCHED_LP,
+      RefinementAlgorithm::JET_REFINER};
   return ctx;
 }
 
 Context create_europar23_fast_context() {
-  return create_default_context();
+  Context ctx = create_default_context();
+  ctx.coarsening.global_lp.enforce_legacy_weight = true;
+  return ctx;
 }
 
 Context create_europar23_strong_context() {
-  Context ctx = create_default_context();
+  Context ctx = create_europar23_fast_context();
   ctx.initial_partitioning.algorithm = InitialPartitioningAlgorithm::MTKAHYPAR;
   ctx.coarsening.global_lp.num_iterations = 5;
   return ctx;

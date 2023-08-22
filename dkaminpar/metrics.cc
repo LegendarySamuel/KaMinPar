@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Partition metrics for distributed graphs.
+ *
  * @file:   metrics.cc
  * @author: Daniel Seemaier
  * @date:   27.10.2021
- * @brief:  Partition metrics for distributed graphs.
  ******************************************************************************/
 #include "dkaminpar/metrics.h"
 
@@ -11,7 +12,7 @@
 #include "dkaminpar/context.h"
 #include "dkaminpar/datastructures/distributed_graph.h"
 #include "dkaminpar/datastructures/distributed_partitioned_graph.h"
-#include "dkaminpar/definitions.h"
+#include "dkaminpar/dkaminpar.h"
 #include "dkaminpar/mpi/wrapper.h"
 
 namespace kaminpar::dist::metrics {
@@ -78,7 +79,8 @@ double imbalance_l2(const DistributedPartitionedGraph &p_graph, const PartitionC
   double distance = 0.0;
   for (const BlockID b : p_graph.blocks()) {
     if (p_graph.block_weight(b) > p_ctx.graph->max_block_weight(b)) {
-      const BlockWeight diff = p_graph.block_weight(b) - p_ctx.graph->max_block_weight(b);
+      const BlockWeight diff =
+          std::max<BlockWeight>(0, p_graph.block_weight(b) - p_ctx.graph->max_block_weight(b));
       distance += 1.0 * diff * diff;
     }
   }
@@ -89,7 +91,7 @@ double imbalance_l1(const DistributedPartitionedGraph &p_graph, const PartitionC
   double distance = 0.0;
   for (const BlockID b : p_graph.blocks()) {
     if (p_graph.block_weight(b) > p_ctx.graph->max_block_weight(b)) {
-      distance += p_graph.block_weight(b) - p_ctx.graph->max_block_weight(b);
+      distance += std::max<double>(0, p_graph.block_weight(b) - p_ctx.graph->max_block_weight(b));
     }
   }
   return distance;

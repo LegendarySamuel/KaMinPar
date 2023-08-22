@@ -13,9 +13,9 @@
 #include <kassert/kassert.hpp>
 #include <tbb/parallel_for.h>
 
-#include "common/noinit_vector.h"
-#include "common/preallocated_vector.h"
-#include "common/scalable_vector.h"
+#include "common/datastructures/noinit_vector.h"
+#include "common/datastructures/preallocated_vector.h"
+#include "common/datastructures/scalable_vector.h"
 
 namespace kaminpar {
 namespace binary_heap {
@@ -492,7 +492,9 @@ public:
   }
 
   void push(const std::size_t heap, const ID id, const Key key) {
+    KASSERT(key != Comparator<Key>::kMinValue);
     KASSERT(_comparator(key, Comparator<Key>::kMinValue));
+
     _heaps[heap].push_back({id, key});
     _id_pos[id] = _heaps[heap].size() - 1;
     sift_up(heap, _id_pos[id]);
@@ -544,6 +546,7 @@ public:
   void decrease_priority(const std::size_t heap, const ID id, const Key &new_key) {
     KASSERT(contains(id));
     KASSERT(_comparator(key(heap, id), new_key));
+
     _heaps[heap][_id_pos[id]].key = new_key;
     sift_up(heap, _id_pos[id]);
   }
@@ -551,6 +554,7 @@ public:
   void increase_priority(const std::size_t heap, const ID id, const Key &new_key) {
     KASSERT(contains(id));
     KASSERT(_comparator(new_key, key(heap, id)));
+
     _heaps[heap][_id_pos[id]].key = new_key;
     sift_down(heap, _id_pos[id]);
   }
@@ -587,6 +591,10 @@ public:
   }
 
   Key key(const std::size_t heap, const std::size_t pos) const {
+    KASSERT(heap < _heaps.size());
+    KASSERT(pos < _id_pos.size());
+    KASSERT(_id_pos[pos] < _heaps[heap].size());
+
     return _heaps[heap][_id_pos[pos]].key;
   }
 
@@ -645,16 +653,25 @@ using DynamicBinaryMinForest = DynamicBinaryForest<ID, Key, binary_heap::min_hea
 template <typename ID, typename Key> class DynamicBinaryMinMaxForest {
 public:
   DynamicBinaryMinMaxForest(const std::size_t capacity, const std::size_t heaps)
-      : _max_forest{capacity, heaps},
-        _min_forest{capacity, heaps} {}
+      : _max_forest(capacity, heaps),
+        _min_forest(capacity, heaps) {}
 
   DynamicBinaryMinMaxForest(const DynamicBinaryMinMaxForest &) = delete;
-  DynamicBinaryMinMaxForest(DynamicBinaryMinMaxForest &&) noexcept = default;
   DynamicBinaryMinMaxForest &operator=(const DynamicBinaryMinMaxForest &) = delete;
+
+  DynamicBinaryMinMaxForest(DynamicBinaryMinMaxForest &&) noexcept = default;
   DynamicBinaryMinMaxForest &operator=(DynamicBinaryMinMaxForest &&) noexcept = default;
 
-  std::size_t capacity() const {
+  [[nodiscard]] inline std::size_t capacity() const {
     return _max_forest.capacity();
+  }
+
+  [[nodiscard]] inline std::size_t size() const {
+    return _max_forest.size();
+  }
+
+  [[nodiscard]] inline std::size_t size(const std::size_t heap) const {
+    return _max_forest.size(heap);
   }
 
   void push(const std::size_t heap, const ID id, const Key key) {
@@ -662,7 +679,19 @@ public:
     _min_forest.push(heap, id, key);
   }
 
-  bool contains(const ID id) const {
+  void change_priority(const std::size_t heap, const ID id, const Key key) {
+    _max_forest.change_priority(heap, id, key);
+    _min_forest.change_priority(heap, id, key);
+  }
+
+  Key key(const std::size_t heap, const ID id) const {
+    KASSERT(_max_forest.contains(id));
+    KASSERT(_min_forest.contains(id));
+    KASSERT(_max_forest.key(heap, id) == _min_forest.key(heap, id));
+    return _max_forest.key(heap, id);
+  }
+
+  [[nodiscard]] bool contains(const ID id) const {
     KASSERT(_max_forest.contains(id) == _min_forest.contains(id));
     return _max_forest.contains(id);
   }
@@ -672,16 +701,19 @@ public:
     return _max_forest.empty(heap);
   }
 
-  ID peek_min_id(const std::size_t heap) const {
+  [[nodiscard]] ID peek_min_id(const std::size_t heap) const {
     return _min_forest.peek_id(heap);
   }
-  ID peek_max_id(const std::size_t heap) const {
+
+  [[nodiscard]] ID peek_max_id(const std::size_t heap) const {
     return _max_forest.peek_id(heap);
   }
-  Key peek_min_key(const std::size_t heap) const {
+
+  [[nodiscard]] Key peek_min_key(const std::size_t heap) const {
     return _min_forest.peek_key(heap);
   }
-  Key peek_max_key(const std::size_t heap) const {
+
+  [[nodiscard]] Key peek_max_key(const std::size_t heap) const {
     return _max_forest.peek_key(heap);
   }
 
@@ -696,18 +728,11 @@ public:
   }
 
   void pop_max(const std::size_t heap) {
+    KASSERT(!_min_forest.empty(heap));
+    KASSERT(!_max_forest.empty(heap));
+
     _min_forest.remove(heap, _max_forest.peek_id(heap));
     _max_forest.pop(heap);
-  }
-
-  std::size_t size(const std::size_t heap) {
-    KASSERT(_min_forest.size(heap) == _max_forest.size(heap));
-    return _max_forest.size(heap);
-  }
-
-  std::size_t size() {
-    KASSERT(_min_forest.size() == _max_forest.size());
-    return _max_forest.size();
   }
 
   void clear() {

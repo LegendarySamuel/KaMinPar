@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Allgather a distributed graph to each PE.
+ *
  * @file:   allgather_graph.cc
  * @author: Daniel Seemaier
  * @date:   27.10.2021
- * @brief:  Allgather a distributed graph to each PE.
  ******************************************************************************/
 #include "dkaminpar/graphutils/replicator.h"
 
@@ -11,7 +12,6 @@
 #include "dkaminpar/datastructures/distributed_graph.h"
 #include "dkaminpar/datastructures/distributed_partitioned_graph.h"
 #include "dkaminpar/datastructures/ghost_node_mapper.h"
-#include "dkaminpar/definitions.h"
 #include "dkaminpar/graphutils/synchronization.h"
 #include "dkaminpar/metrics.h"
 #include "dkaminpar/mpi/utils.h"
@@ -361,7 +361,6 @@ DistributedGraph replicate(const DistributedGraph &graph, const int num_replicat
 
   if (is_node_weighted) {
     KASSERT(graph.is_node_weighted() || graph.n() == 0);
-
     node_weights.resize(nodes_displs.back() + num_ghost_nodes);
     mpi::allgatherv(
         graph.raw_node_weights().data(),
@@ -397,10 +396,6 @@ DistributedGraph replicate(const DistributedGraph &graph, const int num_replicat
   // Fix weights of ghost nodes
   if (is_node_weighted) {
     synchronize_ghost_node_weights(new_graph);
-  } else {
-    tbb::parallel_for<NodeID>(new_graph.n(), new_graph.total_n(), [&](const NodeID u) {
-      new_graph.set_ghost_node_weight(u, 1);
-    });
   }
 
   KASSERT(debug::validate(new_graph), "", assert::heavy);
