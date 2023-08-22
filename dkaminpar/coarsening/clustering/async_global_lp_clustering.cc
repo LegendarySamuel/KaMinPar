@@ -146,7 +146,7 @@ public:
         local_num_moved_nodes = process_chunk_computation(from, to);
         has_iterated = true;
       } else {
-        // previous iteration's last chunk's communication and first chunk communication of current iteration
+        // previous iteration's last chunk's communication and first chunk computation of current iteration
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
