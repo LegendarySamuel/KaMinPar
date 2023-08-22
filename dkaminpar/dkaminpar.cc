@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Public interface of the distributed partitioner.
+ *
  * @file:   dkaminpar.cc
  * @author: Daniel Seemaier
- * @date:   13.03.2023
- * @brief:  Public definitions of the distributed-memory partitioner.
+ * @date:   30.01.2023
  ******************************************************************************/
 #include "dkaminpar/dkaminpar.h"
 
@@ -82,12 +83,7 @@ void print_input_summary(
   const auto ghost_n_str =
       mpi::gather_statistics_str<GlobalNodeID>(graph.ghost_n(), MPI_COMM_WORLD);
 
-  if (!root) {
-    // Non-root PEs are only needed to collect the graph metrics
-    return;
-  }
-
-  if (parseable) {
+  if (root && parseable) {
     LOG << "EXECUTION_MODE num_mpis=" << ctx.parallel.num_mpis
         << " num_threads=" << ctx.parallel.num_threads;
     LOG << "INPUT_GRAPH "
@@ -114,7 +110,7 @@ void print_input_summary(
         << (ctx.parallel.num_mpis > 1 ? "es" : "") << " a " << ctx.parallel.num_threads << " thread"
         << (ctx.parallel.num_threads > 1 ? "s" : "");
   }
-  print(ctx, root, std::cout);
+  print(ctx, root, std::cout, graph.communicator());
   if (root) {
     cio::print_delimiter("Partitioning");
   }

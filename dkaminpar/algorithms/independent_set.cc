@@ -1,8 +1,9 @@
 /*******************************************************************************
+ * Basic independent set algorithm for distributed graphs.
+ *
  * @file:   independent_set.cc
  * @author: Daniel Seemaier
  * @date:   22.08.2022
- * @brief:  Algorithm to find a independent set on distributed graphs.
  ******************************************************************************/
 #include "dkaminpar/algorithms/independent_set.h"
 
@@ -13,7 +14,7 @@
 #include <tbb/concurrent_vector.h>
 #include <tbb/enumerable_thread_specific.h>
 
-#include "dkaminpar/datastructures/distributed_graph.h"
+#include "dkaminpar/datastructures/distributed_partitioned_graph.h"
 
 #include "common/timer.h"
 
@@ -82,6 +83,7 @@ find_independent_border_set(const DistributedPartitionedGraph &p_graph, const in
     }
   });
 
+  mpi::barrier(p_graph.communicator());
   return std::vector<NodeID>(seed_nodes.begin(), seed_nodes.end());
 }
 } // namespace kaminpar::dist::graph

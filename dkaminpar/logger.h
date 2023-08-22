@@ -1,3 +1,15 @@
+/*******************************************************************************
+ * Redefines the logging macros for the distributed setting:
+ *
+ * - DBG(C) also print the PE rank
+ * - (L)LOG(_*) only print on PE 0
+ * - DLOG prints the output from all PEs in undefined order, possibly interleaved
+ * - SLOG collects the output from all PEs and prints it on PE 0
+ *
+ * @file:   logger.h
+ * @author: Daniel Seemaier
+ * @date:   27.10.2021
+ ******************************************************************************/
 #pragma once
 
 #include <mpi.h>
@@ -14,13 +26,15 @@
                             << kaminpar::logger::CYAN << LOG_RANK << kaminpar::logger::MAGENTA     \
                             << POSITION << " " << kaminpar::logger::DEFAULT_TEXT
 
-#define DBG0                                                                                       \
-  (kDebug && kaminpar::mpi::get_comm_rank(MPI_COMM_WORLD) == 0) &&                                 \
+#define DBGX(R)                                                                                    \
+  (kDebug && kaminpar::mpi::get_comm_rank(MPI_COMM_WORLD) == R) &&                                 \
       kaminpar::DisposableLogger<false>(std::cout)                                                 \
           << kaminpar::logger::CYAN << LOG_RANK << kaminpar::logger::MAGENTA << POSITION << " "    \
           << kaminpar::logger::DEFAULT_TEXT
+#define DBG0 DBGX(0)
 
-#define IF_DBG0 if (kDebug && kaminpar::mpi::get_comm_rank(MPI_COMM_WORLD) == 0)
+#define IF_DBGX(R) if (kDebug && kaminpar::mpi::get_comm_rank(MPI_COMM_WORLD) == R)
+#define IF_DBG0 IF_DBGX(0)
 
 #undef LOG
 #undef LLOG
