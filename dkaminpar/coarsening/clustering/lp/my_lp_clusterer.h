@@ -1,12 +1,12 @@
-# include "dkaminpar/coarsening/clustering/clustering_algorithm.h"
+# include "dkaminpar/coarsening/clustering/clusterer.h"
 #include "dkaminpar/context.h"
 #include "dkaminpar/datastructures/distributed_graph.h"
 
 namespace kaminpar::dist {
-class MyLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
+class MyLPClusterer : public Clusterer<GlobalNodeID> {
   public:
     using ClusterArray = NoinitVector<GlobalNodeID>;
-    explicit MyLPClustering(const Context &ctx) : _clusters(NoinitVector<GlobalNodeID>()) {};
+    explicit MyLPClusterer(const Context &ctx) : _clusters(NoinitVector<GlobalNodeID>()) {};
 
     inline ClusterArray &init_clusters( NodeID total_number ) {
       return _clusters = NoinitVector<GlobalNodeID>(total_number);
@@ -18,7 +18,7 @@ class MyLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
 
     inline ClusterArray &get_clusters() { return _clusters; }
 
-    ~MyLPClustering() override;
+    ~MyLPClusterer() override;
 
     void initialize(const DistributedGraph &graph);
 

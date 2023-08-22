@@ -7,29 +7,29 @@
  ******************************************************************************/
 #pragma once
 
-#include "dkaminpar/coarsening/clustering/clustering_algorithm.h"
+#include "dkaminpar/coarsening/clustering/clusterer.h"
 #include "dkaminpar/context.h"
 #include "dkaminpar/datastructures/distributed_graph.h"
 
 namespace kaminpar::dist {
-class AsyncGlobalLPClustering : public ClusteringAlgorithm<GlobalNodeID> {
+class AsyncGlobalLPClusterer : public Clusterer<GlobalNodeID> {
 public:
-  explicit AsyncGlobalLPClustering(const Context &ctx);
+  explicit AsyncGlobalLPClusterer(const Context &ctx);
 
-  AsyncGlobalLPClustering(const AsyncGlobalLPClustering &) = delete;
-  AsyncGlobalLPClustering &operator=(const AsyncGlobalLPClustering &) = delete;
+  AsyncGlobalLPClusterer(const AsyncGlobalLPClusterer &) = delete;
+  AsyncGlobalLPClusterer &operator=(const AsyncGlobalLPClusterer &) = delete;
 
-  AsyncGlobalLPClustering(AsyncGlobalLPClustering &&) = default;
-  AsyncGlobalLPClustering &operator=(AsyncGlobalLPClustering &&) = default;
+  AsyncGlobalLPClusterer(AsyncGlobalLPClusterer &&) = default;
+  AsyncGlobalLPClusterer &operator=(AsyncGlobalLPClusterer &&) = default;
 
-  ~AsyncGlobalLPClustering() override;
+  ~AsyncGlobalLPClusterer() override;
 
   void initialize(const DistributedGraph &graph) final;
 
   ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) final;
 
 private:
-  std::unique_ptr<class AsyncGlobalLPClusteringImpl> _impl;
-friend AsyncGlobalLPClusteringImpl;
+  std::unique_ptr<class AsyncGlobalLPClustererImpl> _impl;
+friend AsyncGlobalLPClustererImpl;
 };
 } // namespace kaminpar::dist

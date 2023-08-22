@@ -1,4 +1,4 @@
-# include "dkaminpar/coarsening/clustering/my_lp_clustering.h"
+# include "dkaminpar/coarsening/clustering/lp/my_lp_clusterer.h"
 # include "dkaminpar/datastructures/distributed_graph.h"
 # include "dkaminpar/context.h"
 # include "common/timer.h"
@@ -19,7 +19,7 @@ namespace kaminpar::dist {
     using ClusterID = GlobalNodeID;
     using cluster_update = std::pair<NodeID, ClusterID>;
     using update_vector = std::vector<cluster_update>;
-    using ClusterArray = MyLPClustering::ClusterArray;
+    using ClusterArray = MyLPClusterer::ClusterArray;
 
     using WeightDelta = GlobalNodeWeight;
     using WeightPart = GlobalNodeWeight;
@@ -35,7 +35,7 @@ namespace kaminpar::dist {
     using remote_changes_vector = std::vector<remote_weight_change>;
 
 
-    MyLPClustering::~MyLPClustering() = default;
+    MyLPClusterer::~MyLPClusterer() = default;
 
     /////////////////////////////////////////////////////////////////////////////// helpers
 
@@ -767,7 +767,7 @@ namespace kaminpar::dist {
 
     ///////////////////////////////////////////////////////////////////////////////
 
-    void MyLPClustering::initialize(const DistributedGraph &graph) {
+    void MyLPClusterer::initialize(const DistributedGraph &graph) {
 
     }
 
@@ -780,7 +780,7 @@ namespace kaminpar::dist {
      * if cluster is the same, do not communicate
      * 3.) put all isolated nodes in one cluster
      */
-    MyLPClustering::ClusterArray &MyLPClustering::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
+    MyLPClusterer::ClusterArray &MyLPClusterer::cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) {
         SCOPED_TIMER("Start label propagation clustering");
         START_TIMER("Initialize");
         // clusterIDs of the vertices
