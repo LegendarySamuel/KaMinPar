@@ -29,7 +29,7 @@ public:
   ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) final;
 
 private:
-  std::unique_ptr<class AsyncGlobalLPClustererImpl> _impl;
-friend AsyncGlobalLPClustererImpl;
+  std::unique_ptr<class AsyncGlobalLPClusteringImpl> _impl;
+friend AsyncGlobalLPClusteringImpl;
 };
 } // namespace kaminpar::dist

@@ -47,7 +47,7 @@ struct UnorderedRatingMap {
   google::dense_hash_map<GlobalNodeID, EdgeWeight> map{};
 };
 
-struct AsyncGlobalLPClustererConfig : public LabelPropagationConfig {
+struct AsyncGlobalLPClusteringConfig : public LabelPropagationConfig {
   using Graph = DistributedGraph;
   using RatingMap = ::kaminpar::RatingMap<EdgeWeight, GlobalNodeID, UnorderedRatingMap>;
   using ClusterID = GlobalNodeID;
@@ -60,19 +60,19 @@ struct AsyncGlobalLPClustererConfig : public LabelPropagationConfig {
 };
 } // namespace
 
-class AsyncGlobalLPClustererImpl final
-    : public ChunkRandomdLabelPropagation<AsyncGlobalLPClustererImpl, AsyncGlobalLPClustererConfig>,
+class AsyncGlobalLPClusteringImpl final
+    : public ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>,
       public NonatomicOwnedClusterVector<NodeID, GlobalNodeID> {
   SET_DEBUG(false);
 
-  using Base = ChunkRandomdLabelPropagation<AsyncGlobalLPClustererImpl, AsyncGlobalLPClustererConfig>;
+  using Base = ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>;
   using ClusterBase = NonatomicOwnedClusterVector<NodeID, GlobalNodeID>;
   using WeightDeltaMap = growt::GlobalNodeIDMap<GlobalNodeWeight>;
 
   struct Statistics {};
 
 public:
-  explicit AsyncGlobalLPClustererImpl(const Context &ctx)
+  explicit AsyncGlobalLPClusteringImpl(const Context &ctx)
       : ClusterBase{ctx.partition.graph->total_n},
         _ctx(ctx),
         _c_ctx(ctx.coarsening),
@@ -822,7 +822,7 @@ std::cout << interfaceoutput.str();
 //
 
 AsyncGlobalLPClusterer::AsyncGlobalLPClusterer(const Context &ctx)
-    : _impl{std::make_unique<AsyncGlobalLPClustererImpl>(ctx)} {}
+    : _impl{std::make_unique<AsyncGlobalLPClusteringImpl>(ctx)} {}
 
 AsyncGlobalLPClusterer::~AsyncGlobalLPClusterer() = default;
 

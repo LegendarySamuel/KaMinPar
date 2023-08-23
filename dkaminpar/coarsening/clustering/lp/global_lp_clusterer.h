@@ -29,6 +29,6 @@ public:
   ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) final;
 
 private:
-  std::unique_ptr<class GlobalLPClustererImpl> _impl;
+  std::unique_ptr<class GlobalLPClusteringImpl> _impl;
 };
 } // namespace kaminpar::dist
