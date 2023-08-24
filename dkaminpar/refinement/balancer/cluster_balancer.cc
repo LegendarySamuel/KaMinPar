@@ -113,7 +113,10 @@ ClusterBalancer::ClusterBalancer(
       _pqs(_p_graph.n(), _p_graph.k()),
       _pq_weights(_p_graph.k()),
       _moved_marker(_p_graph.n()),
-      _weight_buckets(_p_graph, _p_ctx) {}
+      _weight_buckets(
+          _p_graph, _p_ctx, _cb_ctx.par_use_positive_gain_buckets, _cb_ctx.par_gain_bucket_factor
+      ),
+      _current_parallel_rebalance_fraction(_cb_ctx.par_initial_rebalance_fraction) {}
 
 ClusterBalancer::~ClusterBalancer() {
   _factory.take_m_ctx(std::move(*this));
@@ -144,6 +147,9 @@ void ClusterBalancer::rebuild_clusters() {
     }
     try_pq_insertion(cluster);
   }
+
+  // Barrier for time measurement
+  mpi::barrier(_p_graph.communicator());
 }
 
 void ClusterBalancer::init_clusters() {
@@ -295,8 +301,9 @@ bool ClusterBalancer::refine() {
   const double initial_imbalance_distance = metrics::imbalance_l1(_p_graph, _p_ctx);
   double prev_imbalance_distance = initial_imbalance_distance;
 
-  EdgeWeight prev_edge_cut = 0;
-  IFSTATS(prev_edge_cut = metrics::edge_cut(_p_graph));
+  // @todo too expensive
+  // EdgeWeight prev_edge_cut = 0;
+  // IFSTATS(prev_edge_cut = metrics::edge_cut(_p_graph));
 
   bool force_cluster_rebuild = false;
 
@@ -307,7 +314,6 @@ bool ClusterBalancer::refine() {
     if (force_cluster_rebuild || (round > 0 && _cb_ctx.cluster_rebuild_interval > 0 &&
                                   (round % _cb_ctx.cluster_rebuild_interval) == 0)) {
       DBG0 << "  --> rebuild move cluster after every " << _cb_ctx.cluster_rebuild_interval;
-
       rebuild_clusters();
       force_cluster_rebuild = false;
     }
@@ -316,12 +322,14 @@ bool ClusterBalancer::refine() {
       perform_sequential_round();
       DBG0 << "  --> Round " << round << ": seq. balancing: " << prev_imbalance_distance << " --> "
            << metrics::imbalance_l1(_p_graph, _p_ctx);
-      IFSTATS(
-          _stats.seq_imbalance_reduction +=
-          (prev_imbalance_distance - metrics::imbalance_l1(_p_graph, _p_ctx))
-      );
-      IFSTATS(_stats.seq_cut_increase += metrics::edge_cut(_p_graph) - prev_edge_cut);
-      IFSTATS(prev_edge_cut = metrics::edge_cut(_p_graph));
+
+      IF_STATS {
+        _stats.seq_imbalance_reduction +=
+            (prev_imbalance_distance - metrics::imbalance_l1(_p_graph, _p_ctx));
+        // @todo too expensive
+        //  _stats.seq_cut_increase += metrics::edge_cut(_p_graph) - prev_edge_cut;
+        //  prev_edge_cut = metrics::edge_cut(_p_graph);
+      }
     }
 
     if (use_parallel_rebalancing()) {
@@ -331,11 +339,14 @@ bool ClusterBalancer::refine() {
         perform_parallel_round();
         DBG0 << "  --> Round " << round << ": par. balancing: " << imbalance_after_seq_balancing
              << " --> " << metrics::imbalance_l1(_p_graph, _p_ctx);
+
         IFSTATS(
             _stats.par_imbalance_reduction +=
             (imbalance_after_seq_balancing - metrics::imbalance_l1(_p_graph, _p_ctx))
         );
-        IFSTATS(_stats.par_cut_increase += metrics::edge_cut(_p_graph) - prev_edge_cut);
+
+        // @todo too expensive
+        // IFSTATS(_stats.par_cut_increase += metrics::edge_cut(_p_graph) - prev_edge_cut);
       }
     }
 
@@ -436,17 +447,25 @@ void ClusterBalancer::perform_parallel_round() {
 
   for (const BlockID block : _p_graph.blocks()) {
     BlockWeight current_weight = _p_graph.block_weight(block);
-    const BlockWeight max_weight = _p_ctx.graph->max_block_weight(block);
+
+    // We use a "fake" max_weight that only becomes the actual maximum block weight after a few
+    // rounds This slows down rebalancing, but gives nodes in high-gain buckets a better chance for
+    // being moved
+    const BlockWeight max_weight = _p_ctx.graph->max_block_weight(block) +
+                                   (1.0 - _current_parallel_rebalance_fraction) *
+                                       (current_weight - _p_ctx.graph->max_block_weight(block));
+
     if (current_weight > max_weight) {
       if (rank == 0) {
         int cut_off_bucket = 0;
-        for (; cut_off_bucket < Buckets::kNumBuckets && current_weight > max_weight;
+        for (; cut_off_bucket < _weight_buckets.num_buckets() && current_weight > max_weight;
              ++cut_off_bucket) {
           KASSERT(
-              current_overloaded_block * Buckets::kNumBuckets + cut_off_bucket < buckets.size()
+              current_overloaded_block * _weight_buckets.num_buckets() + cut_off_bucket <
+              buckets.size()
           );
           current_weight -=
-              buckets[current_overloaded_block * Buckets::kNumBuckets + cut_off_bucket];
+              buckets[current_overloaded_block * _weight_buckets.num_buckets() + cut_off_bucket];
         }
 
         KASSERT(current_overloaded_block < cut_off_buckets.size());
@@ -471,8 +490,8 @@ void ClusterBalancer::perform_parallel_round() {
     for (const BlockID b : _p_graph.blocks()) {
       if (overload(b) > 0) {
         ss << "Block " << b << ": ";
-        for (std::size_t bucket = 0; bucket < Buckets::kNumBuckets; ++bucket) {
-          ss << buckets[bucket + to_overloaded_map[b] * Buckets::kNumBuckets] << " ";
+        for (std::size_t bucket = 0; bucket < _weight_buckets.num_buckets(); ++bucket) {
+          ss << buckets[bucket + to_overloaded_map[b] * _weight_buckets.num_buckets()] << " ";
         }
         ss << " -- cut-off: " << cut_off_buckets[to_overloaded_map[b]] << "\n";
       }
@@ -491,7 +510,7 @@ void ClusterBalancer::perform_parallel_round() {
 
     if (const BlockID from = _clusters.block(cluster); is_overloaded(from)) {
       auto [gain, to] = _clusters.find_max_relative_gain(cluster);
-      const auto bucket = Buckets::compute_bucket(gain);
+      const auto bucket = _weight_buckets.compute_bucket(gain);
 
       if (bucket < cut_off_buckets[to_overloaded_map[from]]) {
         const NodeWeight weight = _clusters.weight(cluster);
@@ -600,6 +619,10 @@ void ClusterBalancer::perform_parallel_round() {
       _stats.num_par_node_moves += dbg_count_nodes_in_clusters(candidates);
     }
   }
+
+  // Increase rebalance fraction for next round
+  _current_parallel_rebalance_fraction =
+      std::min(1.0, _current_parallel_rebalance_fraction + _cb_ctx.par_rebalance_fraction_increase);
 }
 
 void ClusterBalancer::perform_sequential_round() {
@@ -610,8 +633,10 @@ void ClusterBalancer::perform_sequential_round() {
   const PEID rank = mpi::get_comm_rank(_p_graph.communicator());
 
   // Step 1: identify the best move cluster candidates globally
+  START_TIMER("Pick candidates");
   auto candidates = pick_sequential_candidates();
   candidates = reduce_sequential_candidates(pick_sequential_candidates());
+  STOP_TIMER();
 
   // Step 2: let ROOT decide which candidates to pick
   START_TIMER("Select winners");
@@ -665,8 +690,13 @@ void ClusterBalancer::perform_sequential_round() {
   // Step 4: apply changes
   perform_moves(candidates, true);
 
-  IFSTATS(_stats.num_seq_cluster_moves += candidates.size());
-  IFSTATS(_stats.num_seq_node_moves += dbg_count_nodes_in_clusters(candidates));
+  IF_STATS {
+    _stats.num_seq_cluster_moves += candidates.size();
+    _stats.num_seq_node_moves += dbg_count_nodes_in_clusters(candidates);
+  }
+
+  // Barrier for time measurement
+  mpi::barrier(_p_graph.communicator());
 }
 
 void ClusterBalancer::perform_moves(
@@ -1117,13 +1147,15 @@ bool ClusterBalancer::dbg_validate_bucket_weights() const {
     }
   }
 
-  std::vector<BlockWeight> expected_per_bucket_weights(Buckets::kNumBuckets * _p_graph.k());
+  std::vector<BlockWeight> expected_per_bucket_weights(
+      _weight_buckets.num_buckets() * _p_graph.k()
+  );
   for (const NodeID cluster : _clusters.clusters()) {
     const BlockID block = _clusters.block(cluster);
     if (overload(block) > 0 && !_moved_marker.get(cluster)) {
       KASSERT(_pqs.contains(cluster));
-      const std::size_t bucket = Buckets::compute_bucket(_pqs.key(block, cluster));
-      expected_per_bucket_weights[Buckets::kNumBuckets * block + bucket] +=
+      const std::size_t bucket = _weight_buckets.compute_bucket(_pqs.key(block, cluster));
+      expected_per_bucket_weights[_weight_buckets.num_buckets() * block + bucket] +=
           _clusters.weight(cluster);
     }
   }
@@ -1134,16 +1166,16 @@ bool ClusterBalancer::dbg_validate_bucket_weights() const {
     }
 
     BlockWeight actual_total_weight = 0;
-    for (std::size_t bucket = 0; bucket < Buckets::kNumBuckets; ++bucket) {
+    for (std::size_t bucket = 0; bucket < _weight_buckets.num_buckets(); ++bucket) {
       if (_weight_buckets.size(block, bucket) < 0) {
         LOG_ERROR << "Block " << block << " has negative weight in bucket " << bucket;
         return false;
       }
       if (_weight_buckets.size(block, bucket) !=
-          expected_per_bucket_weights[Buckets::kNumBuckets * block + bucket]) {
+          expected_per_bucket_weights[_weight_buckets.num_buckets() * block + bucket]) {
         LOG_ERROR << "Block " << block << " has " << _weight_buckets.size(block, bucket)
                   << " weight in bucket " << bucket << ", but its expected weight is "
-                  << expected_per_bucket_weights[Buckets::kNumBuckets * block + bucket];
+                  << expected_per_bucket_weights[_weight_buckets.num_buckets() * block + bucket];
         return false;
       }
       actual_total_weight += _weight_buckets.size(block, bucket);
