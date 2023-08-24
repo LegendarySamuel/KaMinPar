@@ -88,6 +88,70 @@ struct GlobalStats {
   }
 };
 
+struct BatchStats {
+  NodeID size;
+  NodeID max_distance;
+  std::vector<NodeID> size_by_distance;
+  std::vector<NodeID> gain_by_distance;
+};
+
+struct GlobalBatchStats {
+  std::vector<std::vector<BatchStats>> iteration_stats;
+
+  void next_iteration(std::vector<BatchStats> stats) {
+    iteration_stats.push_back(std::move(stats));
+  }
+
+  void reset() {
+    iteration_stats.clear();
+  }
+
+  void summarize() {
+    LOG_STATS << "Batches:";
+    for (std::size_t i = 0; i < iteration_stats.size(); ++i) {
+      LOG_STATS << "  * Iteration " << (i + 1) << ":";
+      summarize_iteration(iteration_stats[i]);
+    }
+  }
+
+private:
+  void summarize_iteration(const std::vector<BatchStats> &stats) {
+    const NodeID max_distance =
+        std::max_element(stats.begin(), stats.end(), [&](const auto &lhs, const auto &rhs) {
+          return lhs.max_distance < rhs.max_distance;
+        })->max_distance;
+
+    std::vector<NodeID> total_size_by_distance(max_distance + 1);
+    std::vector<EdgeWeight> total_gain_by_distance(max_distance + 1);
+    for (NodeID distance = 0; distance <= max_distance; ++distance) {
+      for (const auto &batch_stats : stats) {
+        total_size_by_distance[distance] += std::accumulate(
+            batch_stats.size_by_distance.begin(),
+            batch_stats.size_by_distance.begin() + distance + 1,
+            0
+        );
+        total_gain_by_distance[distance] += std::accumulate(
+            batch_stats.gain_by_distance.begin(),
+            batch_stats.gain_by_distance.begin() + distance + 1,
+            0
+        );
+      }
+    }
+
+    LOG_STATS << "    + Max distance: " << max_distance;
+    std::stringstream size_ss, gain_ss;
+    size_ss << "      - Size by distance: " << total_size_by_distance[0];
+    gain_ss << "      - Gain by distance: " << total_gain_by_distance[0];
+
+    for (NodeID distance = 1; distance <= max_distance; ++distance) {
+      size_ss << ", " << total_size_by_distance[distance];
+      gain_ss << ", " << total_gain_by_distance[distance];
+    }
+    LOG_STATS << size_ss.str();
+    LOG_STATS << gain_ss.str();
+  }
+};
+
 class NodeTracker {
 public:
   static constexpr int UNLOCKED = 0;
@@ -207,6 +271,12 @@ struct SharedData {
   NoinitVector<std::size_t> shared_pq_handles;
   NoinitVector<BlockID> target_blocks;
   GlobalStats stats;
+  GlobalBatchStats batch_stats;
+};
+
+struct Move {
+  NodeID node;
+  BlockID from;
 };
 } // namespace fm
 
@@ -226,6 +296,26 @@ public:
   bool refine(PartitionedGraph &p_graph, const PartitionContext &p_ctx) final;
 
 private:
+  using SeedNodesVec = std::vector<NodeID>;
+  using MovesVec = std::vector<fm::Move>;
+  using Batches = tbb::concurrent_vector<std::pair<SeedNodesVec, MovesVec>>;
+
+  std::vector<fm::BatchStats>
+  dbg_compute_batch_stats(const PartitionedGraph &graph, Batches next_batches) const;
+
+  std::pair<PartitionedGraph, Batches>
+  dbg_build_prev_p_graph(const PartitionedGraph &p_graph, Batches next_batches) const;
+
+  fm::BatchStats dbg_compute_single_batch_stats_in_sequence(
+      PartitionedGraph &p_graph,
+      const std::vector<NodeID> &seeds,
+      const std::vector<fm::Move> &moves
+  ) const;
+
+  std::vector<NodeID> dbg_compute_batch_distances(
+      const Graph &graph, const std::vector<NodeID> &seeds, const std::vector<fm::Move> &moves
+  ) const;
+
   const Context &_ctx;
   const KwayFMRefinementContext &_fm_ctx;
 
@@ -234,11 +324,6 @@ private:
 
 class LocalizedFMRefiner {
 public:
-  struct Move {
-    NodeID node;
-    BlockID from;
-  };
-
   LocalizedFMRefiner(
       int id,
       const PartitionContext &p_ctx,
@@ -250,7 +335,9 @@ public:
   EdgeWeight run_batch();
 
   void enable_move_recording();
-  std::vector<Move> take_applied_moves();
+  std::vector<fm::Move> take_applied_moves();
+  const std::vector<fm::Move> &last_batch_moves();
+  const std::vector<NodeID> &last_batch_seed_nodes();
 
 private:
   template <typename PartitionedGraphType, typename GainCacheType>
@@ -289,7 +376,7 @@ private:
   std::vector<NodeID> _touched_nodes;
   std::vector<NodeID> _seed_nodes;
 
-  std::vector<Move> _applied_moves;
+  std::vector<fm::Move> _applied_moves;
   bool _record_applied_moves = false;
 };
 } // namespace kaminpar::shm
