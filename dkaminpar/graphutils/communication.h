@@ -596,6 +596,188 @@ void sparse_alltoall_interface_to_pe(
   );
 }
 
+///////////////////////////////////////////////////////////////
+
+template <
+    typename Message,
+    typename Buffer = NoinitVector<Message>,
+    typename Mapper,
+    typename Filter,
+    typename Builder,
+    typename Receiver>
+void sparse_alltoall_interface_to_pe_custom_range_clustering(
+    const DistributedGraph &graph,
+    const NodeID from,
+    const NodeID to,
+    Mapper &&mapper,
+    Filter &&filter,
+    Builder &&builder,
+    Receiver &&receiver
+) {
+  SCOPED_TIMER("Sparse AllToAll InterfaceToPE");
+
+  constexpr bool builder_invocable_with_pe = std::is_invocable_r_v<Message, Builder, NodeID, PEID>;
+  constexpr bool builder_invocable_with_pe_and_unmapped_node =
+      std::is_invocable_r_v<Message, Builder, NodeID, NodeID, PEID>;
+  constexpr bool builder_invocable_without_pe = std::is_invocable_r_v<Message, Builder, NodeID>;
+  static_assert(
+      builder_invocable_with_pe || builder_invocable_with_pe_and_unmapped_node ||
+          builder_invocable_without_pe,
+      "bad builder type"
+  );
+
+  constexpr bool filter_invocable_with_unmapped_node =
+      std::is_invocable_r_v<bool, Filter, NodeID, NodeID>;
+  constexpr bool filter_invocable_without_unmapped_node =
+      std::is_invocable_r_v<bool, Filter, NodeID>;
+  static_assert(filter_invocable_with_unmapped_node || filter_invocable_without_unmapped_node);
+
+  const PEID size = mpi::get_comm_size(graph.communicator());
+
+  START_TIMER("Message construction");
+
+  // Allocate message counters
+  const PEID num_threads = omp_get_max_threads();
+  std::vector<cache_aligned_vector<std::size_t>> num_messages(
+      num_threads, cache_aligned_vector<std::size_t>(size)
+  );
+
+#pragma omp parallel default(none) shared(size, from, to, mapper, filter, graph, num_messages)
+  {
+    Marker<> created_message_for_pe(static_cast<std::size_t>(size));
+    const PEID thread = omp_get_thread_num();
+
+#pragma omp for
+    for (NodeID seq_u = from; seq_u < to; ++seq_u) {
+      const NodeID u = mapper(seq_u);
+
+      if constexpr (filter_invocable_with_unmapped_node) {
+        if (!filter(seq_u, u)) {
+          continue;
+        }
+      } else {
+        if (!filter(u)) {
+          continue;
+        }
+      }
+
+      for (const auto [e, v] : graph.neighbors(u)) {
+        if (!graph.is_ghost_node(v)) {
+          continue;
+        }
+
+        const PEID pe = graph.ghost_owner(v);
+
+        if (created_message_for_pe.get(pe)) {
+          continue;
+        }
+        created_message_for_pe.set(pe);
+
+        ++num_messages[thread][pe];
+      }
+
+      created_message_for_pe.reset();
+    }
+  }
+
+  // Offset messages for each thread
+  internal::inclusive_col_prefix_sum(num_messages);
+
+  // Allocate send buffers
+  std::vector<Buffer> send_buffers(size);
+  tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
+    send_buffers[pe].resize(num_messages.back()[pe]);
+  });
+
+  // Fill buffers
+#pragma omp parallel default(none)                                                                 \
+    shared(send_buffers, size, from, to, mapper, builder, filter, graph, num_messages)
+  {
+    Marker<> created_message_for_pe(static_cast<std::size_t>(size));
+    const PEID thread = omp_get_thread_num();
+
+#pragma omp for
+    for (NodeID seq_u = from; seq_u < to; ++seq_u) {
+      const NodeID u = mapper(seq_u);
+
+      if constexpr (filter_invocable_with_unmapped_node) {
+        if (!filter(seq_u, u)) {
+          continue;
+        }
+      } else {
+        if (!filter(u)) {
+          continue;
+        }
+      }
+
+      for (const NodeID v : graph.adjacent_nodes(u)) {
+        if (!graph.is_ghost_node(v)) {
+          continue;
+        }
+
+        const PEID pe = graph.ghost_owner(v);
+
+        if (created_message_for_pe.get(pe)) {
+          continue;
+        }
+        created_message_for_pe.set(pe);
+
+        const auto slot = --num_messages[thread][pe];
+
+        if constexpr (builder_invocable_with_pe) {
+          send_buffers[pe][slot] = builder(u, pe);
+        } else if constexpr (builder_invocable_with_pe_and_unmapped_node) {
+          send_buffers[pe][slot] = builder(seq_u, u, pe);
+        } else {
+          send_buffers[pe][slot] = builder(u);
+        }
+      }
+
+      created_message_for_pe.reset();
+    }
+  }
+
+  STOP_TIMER();
+  
+  double mpi_time_start = MPI_Wtime();
+  sparse_alltoall<Message, Buffer>(
+      std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
+  );
+  double mpi_time_end = MPI_Wtime();
+  std::stringstream mpi_time_output;
+  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
+  std::cout << mpi_time_output.str();
+} // namespace dkaminpar::mpi::graph
+
+template <
+    typename Message,
+    typename Buffer = NoinitVector<Message>,
+    typename Filter,
+    typename Builder,
+    typename Receiver>
+void sparse_alltoall_interface_to_pe_clustering(
+    const DistributedGraph &graph,
+    const NodeID from,
+    const NodeID to,
+    Filter &&filter,
+    Builder &&builder,
+    Receiver &&receiver
+) {
+  sparse_alltoall_interface_to_pe_custom_range_clustering<Message, Buffer>(
+      graph,
+      from,
+      to,
+      [](const NodeID u) { return u; },
+      std::forward<Filter>(filter),
+      std::forward<Builder>(builder),
+      std::forward<Receiver>(receiver)
+  );
+}
+
+///////////////////////////////////////////////////////////////
+
+
+
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,

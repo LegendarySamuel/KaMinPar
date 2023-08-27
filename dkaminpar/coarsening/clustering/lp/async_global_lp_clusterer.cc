@@ -674,8 +674,7 @@ std::stringstream interfaceoutput;
 interfaceoutput << "_changed_label interface: " << interfacesize << std::endl;
 std::cout << interfaceoutput.str();
 
-    double mpi_time_start = MPI_Wtime();
-    mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
+    mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
         *_graph,
         from,
         to,
@@ -719,10 +718,6 @@ std::cout << interfaceoutput.str();
           });
         }
     );
-    double mpi_time_end = MPI_Wtime();
-    std::stringstream mpi_time_output;
-    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-    std::cout << mpi_time_output.str();
 
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
