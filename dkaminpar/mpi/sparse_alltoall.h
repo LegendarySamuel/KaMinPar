@@ -59,6 +59,39 @@ void sparse_alltoall(
   );
 }
 
+// Copy for mpi comm time tracking
+/*
+ * Implementation by tag
+ */
+template <typename Message, typename Buffer, typename SendBuffers, typename Receiver>
+void sparse_alltoall_clustering(
+    tag::grid_tag, SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm
+) {
+  sparse_alltoall_grid_clustering<Message, Buffer>(
+      std::forward<SendBuffers>(send_buffers), std::forward<Receiver>(receiver), comm
+  );
+}
+
+// Copy for mpi comm time tracking
+template <typename Message, typename Buffer, typename SendBuffers, typename Receiver>
+void sparse_alltoall_clustering(
+    tag::alltoallv_tag, SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm
+) {
+  sparse_alltoall_alltoallv_clustering<Message, Buffer>(
+      std::forward<SendBuffers>(send_buffers), std::forward<Receiver>(receiver), comm
+  );
+}
+
+// Copy for mpi comm time tracking
+template <typename Message, typename Buffer, typename SendBuffers, typename Receiver>
+void sparse_alltoall_clustering(
+    tag::complete_send_recv_tag, SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm
+) {
+  sparse_alltoall_complete_clustering<Message, Buffer>(
+      std::forward<SendBuffers>(send_buffers), std::forward<Receiver>(receiver), comm
+  );
+}
+
 /*
  * Auto-dispatch implementation
  */
@@ -108,6 +141,39 @@ void sparse_alltoall(std::vector<Buffer> &&send_buffers, Receiver &&receiver, MP
     );
   }
 }
+
+// Copy for mpi comm time tracking
+template <typename Message, typename Buffer = NoinitVector<Message>, typename Receiver>
+void sparse_alltoall_clustering(const std::vector<Buffer> &send_buffers, Receiver &&receiver, MPI_Comm comm) {
+  if (internal::use_sparse_grid_alltoall(send_buffers, comm)) {
+    sparse_alltoall_clustering<Message, Buffer>(
+        tag::grid, send_buffers, std::forward<Receiver>(receiver), comm
+    );
+  } else {
+    sparse_alltoall_clustering<Message, Buffer>(
+        tag::default_sparse_alltoall, send_buffers, std::forward<Receiver>(receiver), comm
+    );
+  }
+}
+
+// Copy for mpi comm time tracking
+template <typename Message, typename Buffer = NoinitVector<Message>, typename Receiver>
+void sparse_alltoall_clustering(std::vector<Buffer> &&send_buffers, Receiver &&receiver, MPI_Comm comm) {
+  if (internal::use_sparse_grid_alltoall(send_buffers, comm)) {
+    sparse_alltoall_clustering<Message, Buffer>(
+        tag::grid, std::move(send_buffers), std::forward<Receiver>(receiver), comm
+    );
+  } else {
+    sparse_alltoall_clustering<Message, Buffer>(
+        tag::default_sparse_alltoall,
+        std::move(send_buffers),
+        std::forward<Receiver>(receiver),
+        comm
+    );
+  }
+}
+
+
 
 template <typename Message, typename Buffer = NoinitVector<Message>>
 std::vector<Buffer> sparse_alltoall_get(std::vector<Buffer> &&send_buffers, MPI_Comm comm) {

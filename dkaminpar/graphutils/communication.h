@@ -596,8 +596,7 @@ void sparse_alltoall_interface_to_pe(
   );
 }
 
-///////////////////////////////////////////////////////////////
-
+// Copy for mpi comm time tracking
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,
@@ -738,17 +737,12 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
   }
 
   STOP_TIMER();
-  
-  double mpi_time_start = MPI_Wtime();
-  sparse_alltoall<Message, Buffer>(
+  sparse_alltoall_clustering<Message, Buffer>(
       std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
   );
-  double mpi_time_end = MPI_Wtime();
-  std::stringstream mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 } // namespace dkaminpar::mpi::graph
 
+// Copy for mpi comm time tracking
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,
