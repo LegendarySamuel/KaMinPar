@@ -123,7 +123,7 @@ public:
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
 
-    mpi::barrier(graph.communicator());
+//mpi::barrier(graph.communicator());
 
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
 
@@ -134,7 +134,7 @@ public:
     bool has_iterated = false;
     //DISABLE_TIMERS();
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
-      mpi::barrier(_graph->communicator());
+//mpi::barrier(_graph->communicator());
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
@@ -161,7 +161,7 @@ public:
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
-        mpi::barrier(_graph->communicator());
+//mpi::barrier(_graph->communicator());
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
@@ -580,11 +580,11 @@ private:
 
   // TODO communication, write into buffer
   GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
-//mpi::barrier(_graph->communicator());
     
     START_TIMER("Chunk communication");
     double start_time = MPI_Wtime();
     double mpi_time_start = MPI_Wtime();
+mpi::barrier(_graph->communicator());
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
     double mpi_time_end = MPI_Wtime();
@@ -593,7 +593,7 @@ private:
     std::cout << mpi_time_output.str();
     
     // ignoring weight constraint
-    //control_cluster_weights(from, to);
+    control_cluster_weights(from, to);
 
     if (global_num_moved_nodes > 0) {
       synchronize_ghost_node_clusters(from, to);
@@ -643,7 +643,7 @@ private:
       ClusterID new_gcluster;
     };
 
-// ouputting the number of changed labels in the array
+// outputting the number of changed labels in the array
 int allsize = 0;
 int interfacesize = 0;
 int pes;
@@ -674,6 +674,8 @@ std::stringstream interfaceoutput;
 interfaceoutput << "_changed_label interface: " << interfacesize << std::endl;
 std::cout << interfaceoutput.str();
 
+mpi::barrier(_graph->communicator());
+    // performing sparse all to all communication and handling messages
     mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
         *_graph,
         from,
@@ -686,6 +688,7 @@ std::cout << interfaceoutput.str();
           tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
             auto &weight_delta_handle = _weight_delta_handles_ets.local();
 
+            // iterate for each interface node, that has received an update
             for (std::size_t i = r.begin(); i != r.end(); ++i) {
               const auto [owner_lnode, new_gcluster] = buffer[i];
 
@@ -695,25 +698,27 @@ std::cout << interfaceoutput.str();
               const NodeID lnode = _graph->global_to_local_node(gnode);
               
               // ignoring weight constraint
-              /*const NodeWeight weight = _graph->node_weight(lnode);
+              const NodeWeight weight = _graph->node_weight(lnode);
 
-              const GlobalNodeID old_gcluster = cluster(lnode);*/
+              const GlobalNodeID old_gcluster = cluster(lnode);
 
               // If we synchronize the weights of clusters with local
               // changes, we already have the right weight including ghost
               // vertices --> only update weight if we did not get an update
 
               // ignoring weight constraint
-              /*if (!should_sync_cluster_weights() ||
+              if (!should_sync_cluster_weights() ||
                   weight_delta_handle.find(old_gcluster + 1) == weight_delta_handle.end()) {
                 change_cluster_weight(old_gcluster, -weight, true);
-              }*/
+              }
+
+              // move node to the newly assigned cluster
               NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
               // ignoring weight constraint
-              /*if (!should_sync_cluster_weights() ||
+              if (!should_sync_cluster_weights() ||
                   weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
                 change_cluster_weight(new_gcluster, weight, false);
-              }*/
+              }
             }
           });
         }
@@ -763,7 +768,7 @@ std::cout << interfaceoutput.str();
       isolated_node_ets.local() = current;
     });
 
-    mpi::barrier(_graph->communicator());
+    //mpi::barrier(_graph->communicator());
   }
 
   [[nodiscard]] bool should_sync_cluster_weights() const {

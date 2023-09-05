@@ -527,7 +527,7 @@ private:
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
 
     // ignoring weight constraint
-    //control_cluster_weights(from, to);
+    control_cluster_weights(from, to);
 
     if (global_num_moved_nodes > 0) {
       synchronize_ghost_node_clusters(from, to);
@@ -550,7 +550,7 @@ private:
       ClusterID new_gcluster;
     };
 
-// ouputting the number of changed labels in the array
+// outputting the number of changed labels in the array
 int allsize = 0;
 int interfacesize = 0;
 int pes;
@@ -602,26 +602,26 @@ std::cout << interfaceoutput.str();
               const NodeID lnode = _graph->global_to_local_node(gnode);
 
               // ignoring weight constraint
-              /*const NodeWeight weight = _graph->node_weight(lnode);
+              const NodeWeight weight = _graph->node_weight(lnode);
 
-              const GlobalNodeID old_gcluster = cluster(lnode);*/
+              const GlobalNodeID old_gcluster = cluster(lnode);
 
               // If we synchronize the weights of clusters with local
               // changes, we already have the right weight including ghost
               // vertices --> only update weight if we did not get an update
 
               // ignoring weight constraint
-              /*if (!should_sync_cluster_weights() ||
+              if (!should_sync_cluster_weights() ||
                   weight_delta_handle.find(old_gcluster + 1) == weight_delta_handle.end()) {
                 change_cluster_weight(old_gcluster, -weight, true);
-              }*/
+              }
               NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
 
               // ignoring weight constraint
-              /*if (!should_sync_cluster_weights() ||
+              if (!should_sync_cluster_weights() ||
                   weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
                 change_cluster_weight(new_gcluster, weight, false);
-              }*/
+              }
             }
           });
         }
