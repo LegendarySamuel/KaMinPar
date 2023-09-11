@@ -10,7 +10,7 @@ project(KaMinPar
 
 set(PROJECT_VENDOR "Daniel Seemaier")
 set(PROJECT_CONTACT "daniel.seemaier@kit.edu")
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 
 ################################################################################
 ## Options                                                                    ##
@@ -227,6 +227,11 @@ if (KAMINPAR_BUILD_DISTRIBUTED OR KAMINPAR_BUILD_BENCHMARKS)
     set(KAGEN_BUILD_APPS OFF)
     set(KAGEN_BUILD_EXAMPLES OFF)
     add_subdirectory(external/KaGen EXCLUDE_FROM_ALL)
+endif ()
+
+# message-queue
+if (KAMINPAR_BUILD_DISTRIBUTED)
+    add_subdirectory(external/message-queue)
 endif ()
 
 message("--------------------------------------------------------------------------------")
