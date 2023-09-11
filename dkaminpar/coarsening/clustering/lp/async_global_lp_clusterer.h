@@ -1,5 +1,5 @@
 /*******************************************************************************
- * @file:   async_global_lp_clustering.h
+ * @file:   async_global_lp_clusterer.h
  * @author: Samuel Gil
  * @date:   27.06.2023
  * @brief   Label propagation clustering without restrictions, i.e., clusters

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * @file:   async_global_lp_clustering.cc
+ * @file:   async_global_lp_clusterer.cc
  * @author: Samuel Gil
  * @date:   27.06.2023
  * @brief:  Label propagation with clusters that can grow to multiple PEs. (Code from global_lp_clustering.cc adjusted for this class with additions (Daniel Seemaier))
