@@ -60,6 +60,8 @@ std::unordered_map<std::string, GlobalClusteringAlgorithm> get_global_clustering
       {"hem-lp", GlobalClusteringAlgorithm::HEM_LP},
       {"my-lp", GlobalClusteringAlgorithm::MY_LP},
       {"ag-lp", GlobalClusteringAlgorithm::AGLP},
+      {"lp2", GlobalClusteringAlgorithm::LP2},
+      {"ag-lp2", GlobalClusteringAlgorithm::AGLP2},
   };
 }
 
@@ -77,6 +79,10 @@ std::ostream &operator<<(std::ostream &out, const GlobalClusteringAlgorithm algo
     return out << "my-lp";
   case GlobalClusteringAlgorithm::AGLP:
     return out << "ag-lp";
+  case GlobalClusteringAlgorithm::LP2:
+    return out << "lp2";
+  case GlobalClusteringAlgorithm::AGLP2:
+    return out << "ag-lp2";
   }
 
   return out << "<invalid>";

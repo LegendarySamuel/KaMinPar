@@ -147,6 +147,10 @@ create_global_clusterer(const Context &ctx, const GlobalClusteringAlgorithm algo
 
   case GlobalClusteringAlgorithm::AGLP:
     return std::make_unique<AsyncGlobalLPClusterer>(ctx);
+  case GlobalClusteringAlgorithm::LP2:
+    return std::make_unique<AsyncGlobalLPClusterer>(ctx);
+  case GlobalClusteringAlgorithm::AGLP2:
+    return std::make_unique<AsyncGlobalLPClusterer>(ctx);
   }
 
   __builtin_unreachable();
