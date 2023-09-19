@@ -135,10 +135,8 @@ public:
       ClusterID new_gcluster;
     };
 
-    // Queue that keeps track of the number of elements added in each iteration
-    tbb::concurrent_queue<int> MessageSize;
-    // Queue that holds the message elements
-    tbb::concurrent_queue<ChangedLabelMessage> MessageBuffer;
+    // Vector that holds the message elements
+    NoinitVector<ChangedLabelMessage> messageBuffer;
 
     // PEID
     PEID rank = mpi::get_comm_rank(graph.communicator());
@@ -155,16 +153,15 @@ public:
       if (!has_iterated) {
         // first chunk's computation
         local_num_moved_nodes = process_chunk_computation(from, to);
-        communicate_labels(from, to, MessageSize, MessageBuffer);
         has_iterated = true;
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, MessageSize, MessageBuffer, rank);
+        communicate_labels(last_from, last_to, messageBuffer);
         comp_thread.join();
-        communicate_labels(from, to, MessageSize, MessageBuffer);
+        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, messageBuffer, rank);
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
@@ -173,13 +170,14 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        global_num_moved_nodes += handle_labels(prev_from, prev_to, local_num_moved_nodes, MessageSize, MessageBuffer, rank);
+        communicate_labels(prev_from, prev_to, messageBuffer);
         comp_thread.join();
-        communicate_labels(from, to, MessageSize, MessageBuffer);
+        global_num_moved_nodes += handle_labels(prev_from, prev_to, local_num_moved_nodes, messageBuffer, rank);
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, MessageSize, MessageBuffer, rank);
+        communicate_labels(last_from, last_to, messageBuffer);
+        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, messageBuffer, rank);
       }
 
       if (global_num_moved_nodes == 0) {
@@ -613,7 +611,7 @@ private:
    * *communicate the labels of the current iteration
   */
   template <typename Message>
-  void communicate_labels(const int from, const int to, tbb::concurrent_queue<int> &sizeQ, tbb::concurrent_queue<Message> &msgBuffer) {
+  void communicate_labels(const int from, const int to, NoinitVector<Message> &msgBuffer) {
 
     double start_time = MPI_Wtime();
 
@@ -628,16 +626,8 @@ private:
         [&](const NodeID lnode) -> Message {
           return {lnode, cluster(lnode)};
         },
-        [&](const auto &buffer, const PEID owner) {
-          tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
-            int counter = 0;
-            // iterate for each interface node, that has received an update
-            for (std::size_t i = r.begin(); i != r.end(); ++i) {
-              msgBuffer.push(buffer[i]);
-              ++counter;
-            }
-            sizeQ.push(counter);
-          });
+        [&](auto &&buffer) {
+          msgBuffer = std::move(buffer);
         }
     );
 
@@ -652,7 +642,7 @@ private:
    * *process labels received in the previous iteration
   */
   template <typename Message>
-  GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, tbb::concurrent_queue<int> &sizeQ, tbb::concurrent_queue<Message> &msgBuffer, const PEID owner) {
+  GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, NoinitVector<Message> &msgBuffer, const PEID owner) {
 
     double start_time = MPI_Wtime();
     double mpi_time_start = MPI_Wtime();
@@ -674,17 +664,13 @@ private:
     }
 
     // handling messages
-    int numMessages = 0;
-    sizeQ.try_pop(numMessages);
-
-    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, numMessages), [&](const auto &r) {
+    tbb::parallel_for(tbb::blocked_range<std::size_t>(0, msgBuffer.size()), [&](const auto &r) {
       auto &weight_delta_handle = _weight_delta_handles_ets.local();
 
       Message message;
       // iterate for each interface node, that has received an update
-      for (std::size_t i = 0; i != numMessages; ++i) {
-        msgBuffer.try_pop(message);
-        const auto [owner_lnode, new_gcluster] = message;
+      for (std::size_t i = r.begin(); i != r.end(); ++i) {
+        const auto [owner_lnode, new_gcluster] = msgBuffer[i];
 
         const GlobalNodeID gnode = _graph->offset_n(owner) + owner_lnode;
         KASSERT(!_graph->is_owned_global_node(gnode));
