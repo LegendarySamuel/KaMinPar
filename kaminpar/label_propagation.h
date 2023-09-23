@@ -811,6 +811,57 @@ protected:
 
     return num_moved_nodes_ets.combine(std::plus{});
   }
+  
+  // TODO iteration for single node
+  NodeID
+  perform_iteration_for_node(const NodeID u) {
+    tbb::enumerable_thread_specific<NodeID> num_moved_nodes_ets;
+
+    tbb::parallel_for(
+        tbb::blocked_range<NodeID>(from, std::min(_graph->n(), to)),
+        [&](const auto &r) {
+          EdgeID work_since_update = 0;
+          NodeID num_removed_clusters = 0;
+
+          auto &num_moved_nodes = num_moved_nodes_ets.local();
+          auto &rand = Random::instance();
+          auto &rating_map = _rating_map_ets.local();
+
+          for (NodeID u = r.begin(); u != r.end(); ++u) {
+            if (_graph->degree(u) > _max_degree) {
+              continue;
+            }
+
+            if constexpr (Config::kUseActiveSetStrategy || Config::kUseLocalActiveSetStrategy) {
+              if (!_active[u].load(std::memory_order_relaxed)) {
+                continue;
+              }
+            }
+
+            if (work_since_update > Config::kMinChunkSize) {
+              if (Base::should_stop()) {
+                return;
+              }
+
+              _current_num_clusters -= num_removed_clusters;
+              work_since_update = 0;
+              num_removed_clusters = 0;
+            }
+
+            const auto [moved_node, emptied_cluster] = handle_node(u, rand, rating_map);
+            work_since_update += _graph->degree(u);
+            if (moved_node) {
+              ++num_moved_nodes;
+            }
+            if (emptied_cluster) {
+              ++num_removed_clusters;
+            }
+          }
+        }
+    );
+
+    return num_moved_nodes_ets.combine(std::plus{});
+  }
 
 private:
   struct Chunk {
