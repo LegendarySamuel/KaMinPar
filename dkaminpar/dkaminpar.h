@@ -344,6 +344,11 @@ struct DebugContext {
   bool save_coarsest_graph;
   bool save_coarsest_partition;
 };
+// TODO
+struct MessageQueueContext {
+  size_t global_threshold;
+  size_t local_threshold;
+};
 
 struct Context {
   GraphOrdering rearrange_by;
@@ -359,6 +364,7 @@ struct Context {
   InitialPartitioningContext initial_partitioning;
   RefinementContext refinement;
   DebugContext debug;
+  MessageQueueContext msg_q_context;
 };
 
 Context create_context_by_preset_name(const std::string &name);

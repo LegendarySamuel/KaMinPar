@@ -19,6 +19,7 @@ void create_all_options(CLI::App *app, Context &ctx) {
   create_coarsening_options(app, ctx);
   create_initial_partitioning_options(app, ctx);
   create_refinement_options(app, ctx);
+  create_message_queue_options(app, ctx);
 }
 
 CLI::Option_group *create_partitioning_options(CLI::App *app, Context &ctx) {
@@ -669,5 +670,20 @@ CLI::Option_group *create_jet_refinement_options(CLI::App *app, Context &ctx) {
       ->capture_default_str();
 
   return jet;
+}
+// TODO
+CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
+  auto *message_queue = app->add_option_group("MessageQueue");
+
+  message_queue
+      ->add_option("--mq-global-threshold", ctx.msg_q_context.global_threshold, "Global Message Queue buffer threshold at which the buffer is flushed.")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  message_queue
+      ->add_option("--mq-local-threshold", ctx.msg_q_context.local_threshold, "Local Message Queue buffer threshold at which the buffer is flushed.")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+
+  return message_queue;
 }
 } // namespace kaminpar::dist

@@ -224,6 +224,10 @@ Context create_default_context() {
       .debug = {
           .save_coarsest_graph = false,
           .save_coarsest_partition = false,
+      },
+      .msg_q_context = { // TODO
+          .global_threshold = 0,
+          .local_threshold = 0,
       }};
 }
 
