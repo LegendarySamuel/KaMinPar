@@ -684,6 +684,10 @@ CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
       ->add_option("--mq-local-threshold", ctx.msg_q_context.local_threshold, "Local Message Queue buffer threshold at which the buffer is flushed.")
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
+  message_queue
+      ->add_option("--mq-message-handle-threshold", ctx.msg_q_context.message_handle_threshold, "Threshold at which received messages are handled.")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
 
   return message_queue;
 }

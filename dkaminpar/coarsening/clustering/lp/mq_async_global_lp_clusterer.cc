@@ -145,16 +145,20 @@ public:
 
       // TODO: asynchronic iteration body
       // TODO need to be able to tell when computation is finished
-      tbb::parallel_for(tbb::blocked_range<NodeID>(0, graph.n()),
-        [&](const auto &r) {
-          for (NodeID u = r.begin(); u != r.end(); ++u) {
-            local_num_moved_nodes += process_node(u, queue);
+      int counter = 0;
+      for (NodeID u = 0; u < graph.n(); ++u) {
+        local_num_moved_nodes += process_node(u, queue);
             
-            // TODO if should handle messages now: handle messages
-            handle_messages(queue);
-          }
+        // TODO if should handle messages now: handle messages
+        if (counter < _ctx.msg_q_context.message_handle_threshold) {
+          ++counter;
+          continue;
+        } else {
+          counter = 0;
+
+          handle_messages(queue);
         }
-      );
+      }
 
       mpi::barrier(_graph->communicator());
 
