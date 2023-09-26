@@ -43,6 +43,9 @@
 #include "dkaminpar/coarsening/clustering/noop_clusterer.h"
 #include "dkaminpar/coarsening/clustering/lp/my_lp_clusterer.h"
 #include "dkaminpar/coarsening/clustering/lp/async_global_lp_clusterer.h"
+#include "dkaminpar/coarsening/clustering/lp/global_lp_clusterer_2.h"
+#include "dkaminpar/coarsening/clustering/lp/async_global_lp_clusterer_2.h"
+#include "dkaminpar/coarsening/clustering/lp/mq_async_global_lp_clusterer.h"
 
 namespace kaminpar::dist::factory {
 std::unique_ptr<Partitioner>
@@ -148,9 +151,11 @@ create_global_clusterer(const Context &ctx, const GlobalClusteringAlgorithm algo
   case GlobalClusteringAlgorithm::AGLP:
     return std::make_unique<AsyncGlobalLPClusterer>(ctx);
   case GlobalClusteringAlgorithm::LP2:
-    return std::make_unique<AsyncGlobalLPClusterer>(ctx);
+    return std::make_unique<GlobalLPClusterer2>(ctx);
   case GlobalClusteringAlgorithm::AGLP2:
-    return std::make_unique<AsyncGlobalLPClusterer>(ctx);
+    return std::make_unique<AsyncGlobalLPClusterer2>(ctx);
+  case GlobalClusteringAlgorithm::MQ_LP:
+    return std::make_unique<MQAsyncGlobalLPClusterer>(ctx);
   }
 
   __builtin_unreachable();

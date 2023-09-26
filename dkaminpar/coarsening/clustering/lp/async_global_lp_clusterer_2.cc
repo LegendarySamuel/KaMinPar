@@ -4,7 +4,7 @@
  * @date:   14.09.2023
  * @brief:  Label propagation with clusters that can grow to multiple PEs. Labels are first buffered and only handled in the following iteration.
  ******************************************************************************/
-#include "dkaminpar/coarsening/clustering/lp/async_global_lp_clusterer.h"
+#include "dkaminpar/coarsening/clustering/lp/async_global_lp_clusterer_2.h"
 
 #include <google/dense_hash_map>
 
@@ -49,7 +49,7 @@ struct UnorderedRatingMap {
   google::dense_hash_map<GlobalNodeID, EdgeWeight> map{};
 };
 
-struct AsyncGlobalLPClusteringConfig : public LabelPropagationConfig {
+struct AsyncGlobalLPClusteringConfig2 : public LabelPropagationConfig {
   using Graph = DistributedGraph;
   using RatingMap = ::kaminpar::RatingMap<EdgeWeight, GlobalNodeID, UnorderedRatingMap>;
   using ClusterID = GlobalNodeID;
@@ -62,19 +62,19 @@ struct AsyncGlobalLPClusteringConfig : public LabelPropagationConfig {
 };
 } // namespace
 
-class AsyncGlobalLPClusteringImpl final
-    : public ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>,
+class AsyncGlobalLPClusteringImpl2 final
+    : public ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl2, AsyncGlobalLPClusteringConfig2>,
       public NonatomicOwnedClusterVector<NodeID, GlobalNodeID> {
   SET_DEBUG(false);
 
-  using Base = ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>;
+  using Base = ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl2, AsyncGlobalLPClusteringConfig2>;
   using ClusterBase = NonatomicOwnedClusterVector<NodeID, GlobalNodeID>;
   using WeightDeltaMap = growt::GlobalNodeIDMap<GlobalNodeWeight>;
 
   struct Statistics {};
 
 public:
-  explicit AsyncGlobalLPClusteringImpl(const Context &ctx)
+  explicit AsyncGlobalLPClusteringImpl2(const Context &ctx)
       : ClusterBase{ctx.partition.graph->total_n},
         _ctx(ctx),
         _c_ctx(ctx.coarsening),
@@ -895,16 +895,16 @@ mpi::barrier(_graph->communicator());
 // Public interface
 //
 
-AsyncGlobalLPClusterer::AsyncGlobalLPClusterer(const Context &ctx)
-    : _impl{std::make_unique<AsyncGlobalLPClusteringImpl>(ctx)} {}
+AsyncGlobalLPClusterer2::AsyncGlobalLPClusterer2(const Context &ctx)
+    : _impl{std::make_unique<AsyncGlobalLPClusteringImpl2>(ctx)} {}
 
-AsyncGlobalLPClusterer::~AsyncGlobalLPClusterer() = default;
+AsyncGlobalLPClusterer2::~AsyncGlobalLPClusterer2() = default;
 
-void AsyncGlobalLPClusterer::initialize(const DistributedGraph &graph) {
+void AsyncGlobalLPClusterer2::initialize(const DistributedGraph &graph) {
   _impl->initialize(graph);
 }
 
-AsyncGlobalLPClusterer::ClusterArray &AsyncGlobalLPClusterer::cluster(
+AsyncGlobalLPClusterer2::ClusterArray &AsyncGlobalLPClusterer2::cluster(
     const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight
 ) {
   return _impl->compute_clustering(graph, max_cluster_weight);

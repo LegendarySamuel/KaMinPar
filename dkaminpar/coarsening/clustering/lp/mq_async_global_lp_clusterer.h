@@ -1,5 +1,5 @@
 /*******************************************************************************
- * @file:   fully_async_global_lp_clusterer.h
+ * @file:   mq_async_global_lp_clusterer.h
  * @author: Samuel Gil
  * @date:   20.09.2023
  * @brief   Label propagation clustering without restrictions, i.e., clusters
@@ -12,24 +12,24 @@
 #include "dkaminpar/datastructures/distributed_graph.h"
 
 namespace kaminpar::dist {
-class FullyAsyncGlobalLPClusterer : public Clusterer<GlobalNodeID> {
+class MQAsyncGlobalLPClusterer : public Clusterer<GlobalNodeID> {
 public:
-  explicit FullyAsyncGlobalLPClusterer(const Context &ctx);
+  explicit MQAsyncGlobalLPClusterer(const Context &ctx);
 
-  FullyAsyncGlobalLPClusterer(const FullyAsyncGlobalLPClusterer &) = delete;
-  FullyAsyncGlobalLPClusterer &operator=(const FullyAsyncGlobalLPClusterer &) = delete;
+  MQAsyncGlobalLPClusterer(const MQAsyncGlobalLPClusterer &) = delete;
+  MQAsyncGlobalLPClusterer &operator=(const MQAsyncGlobalLPClusterer &) = delete;
 
-  FullyAsyncGlobalLPClusterer(FullyAsyncGlobalLPClusterer &&) = default;
-  FullyAsyncGlobalLPClusterer &operator=(FullyAsyncGlobalLPClusterer &&) = default;
+  MQAsyncGlobalLPClusterer(MQAsyncGlobalLPClusterer &&) = default;
+  MQAsyncGlobalLPClusterer &operator=(MQAsyncGlobalLPClusterer &&) = default;
 
-  ~FullyAsyncGlobalLPClusterer() override;
+  ~MQAsyncGlobalLPClusterer() override;
 
   void initialize(const DistributedGraph &graph) final;
 
   ClusterArray &cluster(const DistributedGraph &graph, GlobalNodeWeight max_cluster_weight) final;
 
 private:
-  std::unique_ptr<class FullyAsyncGlobalLPClusteringImpl> _impl;
-friend FullyAsyncGlobalLPClusteringImpl;
+  std::unique_ptr<class MQAsyncGlobalLPClusteringImpl> _impl;
+friend MQAsyncGlobalLPClusteringImpl;
 };
 } // namespace kaminpar::dist

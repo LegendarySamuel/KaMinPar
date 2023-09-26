@@ -69,6 +69,7 @@ enum class GlobalClusteringAlgorithm {
   AGLP,
   LP2,
   AGLP2,
+  MQ_LP,
 };
 
 enum class LocalClusteringAlgorithm {
