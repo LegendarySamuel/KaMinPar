@@ -560,6 +560,9 @@ private:
     // find cluster to move node to
     const NodeID local_num_moved_nodes = perform_iteration_for_node(u);
     
+    if (local_num_moved_nodes == 0) {
+      return 0;
+    }
     // put messages in send buffer
     int pes;
     MPI_Comm_size((*_graph).communicator(), &pes);

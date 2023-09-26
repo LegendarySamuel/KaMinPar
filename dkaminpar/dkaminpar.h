@@ -347,8 +347,8 @@ struct DebugContext {
 };
 // TODO
 struct MessageQueueContext {
-  size_t global_threshold;
-  size_t local_threshold;
+  std::size_t global_threshold;
+  std::size_t local_threshold;
 };
 
 struct Context {

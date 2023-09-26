@@ -825,18 +825,18 @@ protected:
     auto &rating_map = _rating_map_ets.local();
 
     if (_graph->degree(u) > _max_degree) {
-      continue;
+      return 0;
     }
 
     if constexpr (Config::kUseActiveSetStrategy || Config::kUseLocalActiveSetStrategy) {
       if (!_active[u].load(std::memory_order_relaxed)) {
-        continue;
+        return 0;
       }
     }
 
     if (work_since_update > Config::kMinChunkSize) {
       if (Base::should_stop()) {
-        return;
+        return 0;
       }
 
       _current_num_clusters -= num_removed_clusters;
