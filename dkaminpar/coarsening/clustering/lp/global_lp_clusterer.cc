@@ -62,11 +62,11 @@ struct GlobalLPClusteringConfig : public LabelPropagationConfig {
 } // namespace
 
 class GlobalLPClusteringImpl final
-    : public ChunkRandomdLabelPropagation<GlobalLPClusteringImpl, GlobalLPClusteringConfig>,
+    : public InOrderLabelPropagation<GlobalLPClusteringImpl, GlobalLPClusteringConfig>,
       public NonatomicOwnedClusterVector<NodeID, GlobalNodeID> {
   SET_DEBUG(false);
 
-  using Base = ChunkRandomdLabelPropagation<GlobalLPClusteringImpl, GlobalLPClusteringConfig>;
+  using Base = InOrderLabelPropagation<GlobalLPClusteringImpl, GlobalLPClusteringConfig>;
   using ClusterBase = NonatomicOwnedClusterVector<NodeID, GlobalNodeID>;
   using WeightDeltaMap = growt::GlobalNodeIDMap<GlobalNodeWeight>;
 
