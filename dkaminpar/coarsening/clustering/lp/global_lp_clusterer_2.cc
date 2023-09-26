@@ -655,10 +655,11 @@ private:
 
     // handling messages
     for (int i = 0; i < size; ++i) {
-      if (msgBuffers[i].empty()) {
+      NoinitVector<Message> buffer = std::move(msgBuffers[i]);
+      if (buffer.empty()) {
         continue;
       }
-      NoinitVector<Message> buffer = std::move(msgBuffers[i]);
+      PEID owner = i;
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
         auto &weight_delta_handle = _weight_delta_handles_ets.local();
 
@@ -667,7 +668,7 @@ private:
         for (std::size_t j = r.begin(); j != r.end(); ++j) {
           const auto [owner_lnode, new_gcluster] = buffer[j];
 
-          const GlobalNodeID gnode = _graph->offset_n(i) + owner_lnode;
+          const GlobalNodeID gnode = _graph->offset_n(owner) + owner_lnode;
           KASSERT(!_graph->is_owned_global_node(gnode));
 
           const NodeID lnode = _graph->global_to_local_node(gnode);
