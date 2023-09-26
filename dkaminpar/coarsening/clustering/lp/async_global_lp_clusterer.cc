@@ -61,11 +61,11 @@ struct AsyncGlobalLPClusteringConfig : public LabelPropagationConfig {
 } // namespace
 
 class AsyncGlobalLPClusteringImpl final
-    : public ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>,
+    : public InOrderLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>,
       public NonatomicOwnedClusterVector<NodeID, GlobalNodeID> {
   SET_DEBUG(false);
 
-  using Base = ChunkRandomdLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>;
+  using Base = InOrderLabelPropagation<AsyncGlobalLPClusteringImpl, AsyncGlobalLPClusteringConfig>;
   using ClusterBase = NonatomicOwnedClusterVector<NodeID, GlobalNodeID>;
   using WeightDeltaMap = growt::GlobalNodeIDMap<GlobalNodeWeight>;
 
