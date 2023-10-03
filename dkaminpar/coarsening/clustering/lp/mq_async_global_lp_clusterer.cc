@@ -594,10 +594,11 @@ private:
    * label propagation for one node
   */
   NodeID process_node(const NodeID u, MessageQueue &queue) {
-    
+    START_TIMER("Node iteration");
     // find cluster to move node to
     const NodeID local_num_moved_nodes = perform_iteration_for_node(u);
-    
+    STOP_TIMER();
+
     if (local_num_moved_nodes == 0) {
       return 0;
     }
@@ -763,7 +764,7 @@ std::cout << "violation = 1" << std::endl;
    *
   */ 
   void handle_cluster_weights(WeightsMessageQueue &w_queue, const NodeID u) {
-    START_TIMER("Synchronize cluster weights");
+    SCOPED_TIMER("Synchronize cluster weights");
 
     if (!should_sync_cluster_weights()) {
       return;
@@ -892,7 +893,6 @@ std::cout << "start handling violations" << std::endl;
     // set _last_handled_node_weight
     _last_handled_node_weight = u;
 
-    STOP_TIMER();
 std::cout << "cluster_weights handled" << std::endl;
   }
 
