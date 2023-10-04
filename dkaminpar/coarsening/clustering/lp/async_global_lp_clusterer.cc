@@ -535,8 +535,6 @@ private:
 
     mpi::barrier(_graph->communicator());
 
-    STOP_TIMER();
-
     // If we detected a max cluster weight violation, remove node weight
     // proportional to our chunk of the cluster weight
     if (!should_enforce_cluster_weights() || !violation) {
@@ -557,6 +555,7 @@ private:
         move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
       }
     });
+    STOP_TIMER();
   }
 
   // TODO calculation needs to evaluate buffer and calculate iteration
