@@ -169,28 +169,22 @@ public:
           handle_cluster_weights(w_queue, u);
 
           handle_messages(queue);
-std::cout << "handle_messages done" << std::endl;
         }
       }
 
-std::cout << "loop done" << std::endl;
       mpi::barrier(_graph->communicator());
 
-std::cout << "passed barrier" << std::endl;
       const GlobalNodeID global_num_moved_nodes = 
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
 
-std::cout << "allreduce done" << std::endl;
       if (_c_ctx.global_lp.merge_singleton_clusters) {
         cluster_isolated_nodes(0, graph.n());
       }
 
-std::cout << "cluster_isolated_nodes done" << std::endl;
       // if noting changed during the iteration, end clustering
       if (global_num_moved_nodes == 0) {
         break;
       }
-std::cout << "iteration done" << std::endl;
       // terminate and reactivate queue
       handle_cluster_weights(w_queue, graph.n() - 1);
       terminate_queue(queue);
@@ -199,12 +193,10 @@ std::cout << "iteration done" << std::endl;
       w_queue.reactivate();
       queue.reactivate();
 
-std::cout << "iteration termination done" << std::endl;
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
     }
-std::cout << "iteration loop done" << std::endl;
     
     // finish handling labels before returning
     handle_cluster_weights(w_queue, graph.n() - 1);
@@ -215,7 +207,6 @@ std::cout << "iteration loop done" << std::endl;
     // free unused communicator
     MPI_Comm_free(&_w_comm);
 
-std::cout << "return clusters" << std::endl;
     return clusters();
   }
 
@@ -717,7 +708,6 @@ private:
           }
         } else {
           // case: cluster is not owned
-std::cout << "not owned case" << std::endl;
           GlobalNodeWeight new_weight = delta;
           const GlobalNodeWeight old_weight = cluster_weight(cluster);
 
@@ -729,7 +719,6 @@ std::cout << "not owned case" << std::endl;
             KASSERT(it != handle.end());
             const GlobalNodeWeight increase_by_me = (*it).second;
 
-std::cout << "violation = 1" << std::endl;
             violation = 1;
             if (_c_ctx.global_lp.enforce_legacy_weight) {
               new_weight = _max_cluster_weight + (1.0 * increase_by_me / increase_by_others) *
@@ -862,7 +851,6 @@ std::cout << "violation = 1" << std::endl;
 
     // handle messages
     do {
-std::cout << "got new messages" << std::endl;
       not_empty = handle_weights_messages(w_queue, u, violation, owned_clusters);
     } while (not_empty);
 
@@ -872,7 +860,6 @@ std::cout << "got new messages" << std::endl;
     if (!should_enforce_cluster_weights() || !violation) {
       return;
     }
-std::cout << "start handling violations" << std::endl;
 
     // TODO optimize the calculation, by setting the proper interval or posthandling
     //_graph->pfor_nodes(_last_handled_node_weight, u, [&](const NodeID u) {
@@ -892,8 +879,6 @@ std::cout << "start handling violations" << std::endl;
 
     // set _last_handled_node_weight
     _last_handled_node_weight = u;
-
-std::cout << "cluster_weights handled" << std::endl;
   }
 
   /*!
