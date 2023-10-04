@@ -563,13 +563,7 @@ private:
   // TODO calculation needs to evaluate buffer and calculate iteration
   NodeID process_chunk_computation(const NodeID from, const NodeID to) {
     START_TIMER("Chunk computation");
-    double start_time = MPI_Wtime();
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk computation: " << end_time - start_time << std::endl;
-    std::cout << output.str();
-    STOP_TIMER();
 
     if (_c_ctx.global_lp.merge_singleton_clusters) {
       cluster_isolated_nodes(from, to);
@@ -582,15 +576,9 @@ private:
   GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
     
     START_TIMER("Chunk communication");
-    double start_time = MPI_Wtime();
-    double mpi_time_start = MPI_Wtime();
     mpi::barrier(_graph->communicator());
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
-    double mpi_time_end = MPI_Wtime();
-    std::stringstream mpi_time_output;
-    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-    std::cout << mpi_time_output.str();
     
     control_cluster_weights(from, to);
 
@@ -598,11 +586,6 @@ private:
       synchronize_ghost_node_clusters(from, to);
     }
 
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk communication: " << end_time - start_time << std::endl;
-    std::cout << output.str();
-    
     STOP_TIMER();
 
     return global_num_moved_nodes;
@@ -613,8 +596,6 @@ private:
   */
   template <typename Message>
   void communicate_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers) {
-
-    double start_time = MPI_Wtime();
 
     mpi::barrier(_graph->communicator());
 
@@ -632,11 +613,6 @@ private:
         }
     );
 
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk communication: " << end_time - start_time << std::endl;
-    std::cout << output.str();
-
   }
 
   /**
@@ -645,18 +621,10 @@ private:
   template <typename Message>
   GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
 
-    double start_time = MPI_Wtime();
-    double mpi_time_start = MPI_Wtime();
-
     mpi::barrier(_graph->communicator());
 
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
-
-    double mpi_time_end = MPI_Wtime();
-    std::stringstream mpi_time_output;
-    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-    std::cout << mpi_time_output.str();
 
     control_cluster_weights(from, to);
 
@@ -711,10 +679,6 @@ private:
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
     
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk communication: " << end_time - start_time << std::endl;
-    std::cout << output.str();
     return global_num_moved_nodes;
   }
 
@@ -727,37 +691,6 @@ private:
       NodeID owner_lnode;
       ClusterID new_gcluster;
     };
-
-// outputting the number of changed labels in the array
-int allsize = 0;
-int interfacesize = 0;
-int pes;
-MPI_Comm_size((*_graph).communicator(), &pes);
-for (NodeID u = from; u < to; ++u) {
-  int added_for_pe[pes] {0};
-  if (_changed_label[u] == kInvalidGlobalNodeID) {
-    continue;
-  }
-  ++allsize;
-  for (const auto [e, v] : (*_graph).neighbors(u)) {
-    if (!(*_graph).is_ghost_node(v)) {
-      continue;
-    }
-    const PEID pe = (*_graph).ghost_owner(v);
-
-    if (added_for_pe[pe] == 1) {
-      continue;
-    }
-    added_for_pe[pe] = 1;
-    ++interfacesize;
-  }
-}
-std::stringstream output;
-output << "_changed_label all: " << allsize << std::endl;
-std::cout << output.str();
-std::stringstream interfaceoutput;
-interfaceoutput << "_changed_label interface: " << interfacesize << std::endl;
-std::cout << interfaceoutput.str();
 
 mpi::barrier(_graph->communicator());
     // performing sparse all to all communication and handling messages
