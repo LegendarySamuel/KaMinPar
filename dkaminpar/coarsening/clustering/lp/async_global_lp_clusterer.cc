@@ -399,7 +399,7 @@ private:
   }
 
   void control_cluster_weights(const NodeID from, const NodeID to) {
-    START_TIMER("Synchronize cluster weights");
+    SCOPED_TIMER("Synchronize cluster weights");
 
     if (!should_sync_cluster_weights()) {
       return;
@@ -534,8 +534,6 @@ private:
     STOP_TIMER();
 
     mpi::barrier(_graph->communicator());
-
-    STOP_TIMER();
 
     // If we detected a max cluster weight violation, remove node weight
     // proportional to our chunk of the cluster weight
