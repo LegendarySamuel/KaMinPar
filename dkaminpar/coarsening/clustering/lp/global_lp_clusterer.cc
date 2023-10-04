@@ -511,7 +511,6 @@ private:
         move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
       }
     });
-    STOP_TIMER();
   }
 
   GlobalNodeID process_chunk(const NodeID from, const NodeID to) {

@@ -556,7 +556,6 @@ private:
         move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
       }
     });
-    STOP_TIMER();
   }
 
   // TODO calculation needs to evaluate buffer and calculate iteration
