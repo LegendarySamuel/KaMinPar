@@ -17,7 +17,7 @@
 #include "common/datastructures/fast_reset_array.h"
 #include "common/math.h"
 
-#include <external/message-queue/include/message-queue/buffered_queue_v2.h>
+#include <external/message-queue/include/message-queue/buffered_queue.hpp>
 
 namespace kaminpar::dist {
 namespace {
@@ -70,9 +70,124 @@ class MQAsyncGlobalLPClusteringImpl final
   using Base = ChunkRandomdLabelPropagation<MQAsyncGlobalLPClusteringImpl, MQAsyncGlobalLPClusteringConfig>;
   using ClusterBase = NonatomicOwnedClusterVector<NodeID, GlobalNodeID>;
   using WeightDeltaMap = growt::GlobalNodeIDMap<GlobalNodeWeight>;
+
+  using LabelMessage = struct {
+    NodeID owner_lnode; // uint32_t
+    ClusterID new_gcluster; // uint64_t
+  };
+
+  using WeightsMessage = struct {
+    uint64_t flag:2;
+    GlobalNodeID clusterID:62;  // uint64_t
+    GlobalNodeWeight delta; // int64_t
+  };
   
-  using MessageQueue = message_queue::BufferedMessageQueueV2<std::pair<NodeID, ClusterID>>;
-  using WeightsMessageQueue = message_queue::BufferedMessageQueueV2<std::pair<GlobalNodeID, GlobalNodeWeight>>;
+  /**
+   * Label Merger
+  */
+  struct LabelMerger {
+    template <message_queue::MPIBuffer BufferContainer>
+    void operator()(BufferContainer& buffer,
+            PEID buffer_destination,
+            PEID my_rank,
+            message_queue::Envelope auto envelope) const {
+      if (!buffer.empty()) {
+            buffer.push_back(std::numeric_limits<std::uint64_t>::max());  // sentinel
+        }
+        buffer.push_back(envelope.sender);
+        buffer.push_back(envelope.receiver);
+        buffer.push_back(envelope.tag);
+        for (auto elem : msg.message) {
+            buf.emplace_back(elem.owner_lnode);
+            buf.emplace_back(elem.new_gcluster);
+        }
+    }
+    template <typename MessageContainer, typename BufferContainer>
+    size_t estimate_new_buffer_size(BufferContainer const& buffer,
+                    PEID buffer_destination,
+                    PEID my_rank,
+                    message_queue::MessageEnvelope<MessageContainer> const& envelope) const {
+      return buffer.size() + envelope.message.size() * 2 + 4;
+    };
+  };
+
+  /**
+   * Label Splitter
+  */
+  struct LabelSplitter {
+    auto operator()(message_queue::MPIBuffer<std::uint64_t> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
+      return buffer | std::ranges::views::split(std::numeric_limits<std::uint64_t>::max())
+                    | std::ranges::views::transform([](auto&& chunk) {
+                  auto sender = chunk[0];
+                  auto receiver = chunk[1];
+                  auto tag = chunk[2];
+                  auto message = chunk | std::ranges::views::transform([&](auto index) {  // assuming index starts at 0
+                                            return std::ranges::views::take(chunk | std::ranges::views::drop(3) | std::ranges::views::drop(index * 2), 2);
+                                          })
+                                       | std::ranges::views::transform([&](auto const& subchunk) {
+                                            return LabelMessage(static_cast<uint32_t>(subchunk[0]), subchunk[1]);
+                                          });
+
+                  return message_queue::MessageEnvelope{
+                      .message = std::move(message), .sender = static_cast<int>(sender), .receiver = static_cast<int>(receiver), .tag = static_cast<int>(tag)};
+              });
+    }
+  };
+
+  /**
+   * Weights Merger
+  */
+  struct WeightsMerger {
+    template <message_queue::MPIBuffer BufferContainer>
+    void operator()(BufferContainer& buffer,
+            PEID buffer_destination,
+            PEID my_rank,
+            message_queue::Envelope auto envelope) const {
+      if (!buffer.empty()) {
+            buffer.push_back(std::numeric_limits<std::uint64_t>::max());  // sentinel
+        }
+        buffer.push_back(envelope.sender);
+        buffer.push_back(envelope.receiver);
+        buffer.push_back(envelope.tag);
+        for (auto elem : msg.message) {
+            buf.emplace_back(elem.flag << 62 | elem.clusterID);
+            buf.emplace_back(elem.delta);
+        }
+    }
+    template <typename MessageContainer, typename BufferContainer>
+    size_t estimate_new_buffer_size(BufferContainer const& buffer,
+                    PEID buffer_destination,
+                    PEID my_rank,
+                    message_queue::MessageEnvelope<MessageContainer> const& envelope) const {
+      return buffer.size() + envelope.message.size() * 2 + 4;
+    };
+  };
+
+  /**
+   * Weights Splitter
+  */
+  struct WeightsSplitter {
+    auto operator()(message_queue::MPIBuffer<std::uint64_t> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
+      return buffer | std::ranges::views::split(std::numeric_limits<std::uint64_t>::max()) | std::ranges::views::transform([](auto&& chunk) {
+                  auto sender = chunk[0];
+                  auto receiver = chunk[1];
+                  auto tag = chunk[2];
+                  auto message = chunk | std::ranges::views::transform([&](auto index) {  // assuming index starts at 0
+                                            return std::ranges::views::take(chunk | std::ranges::views::drop(3) | std::ranges::views::drop(index * 2), 2);
+                                          })
+                                       | std::ranges::views::transform([&](auto const& subchunk) {
+                                            return WeightsMessage(subchunk[0] >> 0, subchunk[0] & ((1ULL << 62) - 1), static_cast<int64_t>(subchunk[1]));
+                                          });
+
+                  return message_queue::MessageEnvelope{
+                      .message = std::move(message), .sender = static_cast<int>(sender), .receiver = static_cast<int>(receiver), .tag = static_cast<int>(tag)};
+              });
+    }
+  };
+
+  using MessageQueue = message_queue::BufferedMessageQueue<LabelMessage, std::uint64_t, std::vector<std::uint64_t>, LabelMerger, LabelSplitter>;
+
+  using WeightsMessageQueue = message_queue::BufferedMessageQueue<WeightsMessage, std::uint64_t, std::vector<std::uint64_t>, WeightsMerger, WeightsSplitter>;
 
   struct Statistics {};
 
@@ -123,6 +238,33 @@ public:
     STOP_TIMER();
   }
 
+  /**
+   * Message Queue for sending Labels (owner_lnode, new_gcluster)
+  */
+  MessageQueue make_label_message_queue(const DistributedGraph &graph) {
+
+    // message queue
+    MessageQueue queue = message_queue::make_buffered_queue<LabelMessage, std::uint64_t>(graph.communicator(), LabelMerger{}, LabelSplitter{});
+    
+    queue.global_threshold(_ctx.msg_q_context.global_threshold);
+    queue.local_threshold(_ctx.msg_q_context.local_threshold);
+
+    return queue;
+  }
+
+  /**
+   *  Weights Message Queue sending WeightsMessage (cluster, weight_delta)
+  */
+  WeightsMessageQueue make_weights_message_queue() {
+    
+    WeightsMessageQueue w_queue = message_queue::make_buffered_queue<WeightsMessage, std::uint64_t>(_w_comm, WeightsMerger{}, WeightsSplitter{});
+
+    w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
+    w_queue.local_threshold(_ctx.msg_q_context.weights_local_threshold);
+
+    return w_queue;
+  }
+
   // TODO async
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
@@ -133,17 +275,12 @@ public:
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
 
     MPI_Comm_dup(graph.communicator(), &_w_comm);
-    // message queue (owner_lnode, new_gcluster)
-    // optional: make merger, splitter, cleaner
-    MessageQueue queue = message_queue::BufferedMessageQueueV2<std::pair<NodeID, ClusterID>>(graph.communicator(), 100);
-    queue.global_threshold(_ctx.msg_q_context.global_threshold);
-    queue.local_threshold(_ctx.msg_q_context.local_threshold);
 
-    // weights queue (cluster, weight_delta)
-    // TODO maybe use a third queue for owning-pe-send messages
-    WeightsMessageQueue w_queue = message_queue::BufferedMessageQueueV2<std::pair<GlobalNodeID, GlobalNodeWeight>>(_w_comm, 100);
-    w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
-    w_queue.local_threshold(_ctx.msg_q_context.weights_local_threshold);
+    // label queue
+    auto&& queue = make_label_message_queue(graph);
+
+    // weights queue
+    auto&& w_queue = make_weights_message_queue();
 
     SCOPED_TIMER("Compute label propagation clustering");
 
@@ -619,9 +756,10 @@ private:
   /**
    * provides messge handler for label message queue
   */
-  std::function<void(std::vector<std::pair<NodeID, ClusterID>>, PEID, int)> get_message_handler() {
-    return [&](std::vector<std::pair<NodeID, ClusterID>> &&buffer, PEID owner, int tag) {
-
+  std::function<void(message_queue::MessageEnvelope<std::pair<NodeID, ClusterID>> const &envelope)> get_message_handler() {
+    return [&](message_queue::MessageEnvelope<std::pair<NodeID, ClusterID>> const& envelope) {
+      
+      // TODO only handle single envelopes (split handler does the iteration)
       // handle received messages
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
         auto &weight_delta_handle = _weight_delta_handles_ets.local();
@@ -630,7 +768,7 @@ private:
         for (std::size_t i = r.begin(); i != r.end(); ++i) {
           const auto [owner_lnode, new_gcluster] = buffer[i];
 
-          const GlobalNodeID gnode = _graph->offset_n(owner) + owner_lnode;
+          const GlobalNodeID gnode = _graph->offset_n(envelope.sender) + owner_lnode;
           KASSERT(!_graph->is_owned_global_node(gnode));
 
           const NodeID lnode = _graph->global_to_local_node(gnode);
