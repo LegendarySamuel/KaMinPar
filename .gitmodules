@@ -10,3 +10,7 @@
 [submodule "external/message-queue"]
 	path = external/message-queue
 	url = https://github.com/niklas-uhl/message-queue.git
+[submodule "external/range-v3"]
+	path = external/range-v3
+	url = https://github.com/ericniebler/range-v3.git
+	branch = release-0.12.0

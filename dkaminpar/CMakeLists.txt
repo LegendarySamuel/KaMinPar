@@ -5,7 +5,8 @@ find_package(OpenMP REQUIRED)
 
 add_library(dkaminpar ${DIST_SOURCE_FILES})
 target_include_directories(dkaminpar PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../")
-target_link_libraries(dkaminpar PUBLIC kaminpar MPI::MPI_CXX OpenMP::OpenMP_CXX growt Sparsehash::Sparsehash message-queue::message-queue)
+target_link_libraries(dkaminpar PUBLIC kaminpar MPI::MPI_CXX OpenMP::OpenMP_CXX growt Sparsehash::Sparsehash message-queue::message-queue range-v3::range-v3)
+target_compile_options(dkaminpar PRIVATE -fconcepts-diagnostics-depth=4)
 
 # If we can find Mt-KaHyPar, make it available as an option for initial partitioning
 if (KAMINPAR_BUILD_WITH_MTKAHYPAR)

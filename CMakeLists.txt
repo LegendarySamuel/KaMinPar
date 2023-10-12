@@ -229,9 +229,10 @@ if (KAMINPAR_BUILD_DISTRIBUTED OR KAMINPAR_BUILD_BENCHMARKS)
     add_subdirectory(external/KaGen EXCLUDE_FROM_ALL)
 endif ()
 
-# message-queue
+# message-queue and range-v3
 if (KAMINPAR_BUILD_DISTRIBUTED)
     add_subdirectory(external/message-queue)
+    add_subdirectory(external/range-v3)
 endif ()
 
 message("--------------------------------------------------------------------------------")
