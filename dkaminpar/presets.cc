@@ -228,6 +228,7 @@ Context create_default_context() {
       .msg_q_context = { // TODO
           .global_threshold = 0,
           .local_threshold = 0,
+          .dynamic_threshold = true,
           .message_handle_threshold = 0,
           .weights_global_threshold = 0,
           .weights_local_threshold = 0,

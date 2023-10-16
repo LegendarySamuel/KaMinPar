@@ -251,10 +251,34 @@ public:
     // message queue
     auto queue = message_queue::make_buffered_queue<LabelMessage, uint64_t>(graph.communicator(), LabelMerger{}, LabelSplitter{});
     
-    queue.global_threshold(_ctx.msg_q_context.global_threshold);
-    queue.local_threshold(_ctx.msg_q_context.local_threshold);
+    // dynamically calculated threshold sizes (similar to chunksize)
+    // now half of original value
+    if (_ctx.msg_q_context.dynamic_threshold) {
+      auto [l_threshold, g_threshold] = compute_label_MQ_buffer_size();
+      queue.global_threshold(g_threshold / 2);
+      queue.local_threshold(l_threshold / 2);
+    } else {
+      queue.global_threshold(_ctx.msg_q_context.global_threshold);
+      queue.local_threshold(_ctx.msg_q_context.local_threshold);
+    }
 
     return std::move(queue);
+  }
+
+  /**
+   * Compute the label MQ buffer dynamically size
+  */
+  std::pair<size_t, size_t> compute_label_MQ_buffer_size() {
+    int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
+    size_t l_threshold;
+    NodeID num_nodes = _graph->n();
+    if (num_nodes % num_chunks == 0) {
+      l_threshold = num_nodes / num_chunks;
+    } else {
+      l_threshold = (num_nodes / num_chunks) + 1;
+    }
+    size_t g_threshold = mpi::get_comm_size(_graph->communicator()) * l_threshold;
+    return std::make_pair(l_threshold, g_threshold);
   }
 
   /**
@@ -285,7 +309,10 @@ public:
     MessageQueue queue = make_label_message_queue(graph);
 
     // weights queue
-    WeightsMessageQueue w_queue = make_weights_message_queue();
+    WeightsMessageQueue w_queue;
+    if (should_sync_cluster_weights()) {
+      w_queue = make_weights_message_queue();
+    }
 
     SCOPED_TIMER("Compute label propagation clustering");
 
@@ -308,7 +335,9 @@ public:
           counter = 0;
 
           // weight handling here 
-          handle_cluster_weights(w_queue, u);
+          if (should_sync_cluster_weights()) {
+            handle_cluster_weights(w_queue, u);
+          }
 
           handle_messages(queue);
         }
@@ -328,11 +357,15 @@ public:
         break;
       }
       // terminate and reactivate queue
-      handle_cluster_weights(w_queue, graph.n() - 1);
+      if (should_sync_cluster_weights()) {
+        handle_cluster_weights(w_queue, graph.n() - 1);
+      }
       terminate_queue(queue);
-      handle_cluster_weights(w_queue, graph.n() - 1);
-      terminate_weights_queue(w_queue, graph.n() - 1);
-      w_queue.reactivate();
+      if (should_sync_cluster_weights()) {
+        handle_cluster_weights(w_queue, graph.n() - 1);
+        terminate_weights_queue(w_queue, graph.n() - 1);
+        w_queue.reactivate();
+      }
       queue.reactivate();
 
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
@@ -341,10 +374,14 @@ public:
     }
     
     // finish handling labels before returning
-    handle_cluster_weights(w_queue, graph.n() - 1);
+    if (should_sync_cluster_weights()) {
+      handle_cluster_weights(w_queue, graph.n() - 1);
+    }
     terminate_queue(queue);
-    handle_cluster_weights(w_queue, graph.n() - 1);
-    terminate_weights_queue(w_queue, graph.n() - 1);
+    if (should_sync_cluster_weights()) {
+      handle_cluster_weights(w_queue, graph.n() - 1);
+      terminate_weights_queue(w_queue, graph.n() - 1);
+    }
 
     // free unused communicator
     MPI_Comm_free(&_w_comm);
