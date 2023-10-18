@@ -685,7 +685,7 @@ CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
   message_queue
-      ->add_option("--mq-message-handle-threshold", ctx.msg_q_context.message_handle_threshold, "Threshold at which received messages are handled.")
+      ->add_option("--mq-message-handle-threshold", ctx.msg_q_context.message_handle_threshold, "Threshold at which received label messages are handled.")
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
   message_queue
@@ -695,6 +695,13 @@ CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
   message_queue
       ->add_option("--mq-weights-local-threshold", ctx.msg_q_context.weights_local_threshold, "Local Message Queue buffer threshold at which the weights buffer is flushed.")
       ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  message_queue
+      ->add_option("--mq-weights-handle-threshold", ctx.msg_q_context.weights_handle_threshold, "Threshold at which received weights messages are handled.")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  message_queue
+      ->add_flag("--mq-lock-then-retry", ctx.msg_q_context.lock_then_retry, "Handle weights by the Lock-Then-Retry strategy.")
       ->capture_default_str();
 
   return message_queue;

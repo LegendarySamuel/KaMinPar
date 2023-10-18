@@ -231,6 +231,8 @@ Context create_default_context() {
           .message_handle_threshold = 0,
           .weights_global_threshold = 0,
           .weights_local_threshold = 0,
+          .weights_handle_threshold = 0,
+          .lock_then_retry = false,
       }};
 }
 
