@@ -707,8 +707,10 @@ protected:
 template <typename Derived, typename Config> class MQLabelPropagationBase : public LabelPropagation<Derived, Config> {
 
   using MQBase = LabelPropagation<Derived, Config>;
+  using Graph = typename MQBase::Graph;
+  using ClusterID = typename MQBase::ClusterID;
 
-  [[nodiscard]] bool derived_is_cluster_locked(const DistributedGraph &graph, ClusterID cluster) {
+  [[nodiscard]] bool derived_is_cluster_locked(const Graph &graph, ClusterID cluster) {
     return static_cast<Derived *>(this)->is_cluster_locked(graph, cluster);
   }
 };
