@@ -22,6 +22,7 @@
 #include <range/v3/all.hpp>
 
 #include <sparsehash/dense_hash_set>
+#include <sparsehash/dense_hash_map>
 
 namespace kaminpar::dist {
 namespace {
@@ -244,6 +245,9 @@ public:
       _global_locked_clusters.set_empty_key(std::numeric_limits<ClusterID>::max());
       _global_locked_clusters.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
       std::fill(_local_locked_clusters.begin(), _local_locked_clusters.end(), 0);
+      _unowned_clusters_local_weight.set_empty_key(std::numeric_limits<ClusterID>::max());
+      _unowned_clusters_local_weight.set_deleted_key(std::numeric_limits<ClusterID>::max());
+
     }
 
     // Initialize data structures
@@ -351,6 +355,11 @@ public:
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
+
+      // cleanup: handle overweight clusters
+      if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry) { 
+        fix_overweight_clusters(graph);
+      }
     }
     
     // finish handling labels before returning
@@ -360,11 +369,6 @@ public:
 
     // free unused communicator
     MPI_Comm_free(&_w_comm);
-
-    // TODO handle overweight clusters
-    if (fix_overweight_clusters(graph)) {
-      return compute_clustering(graph, max_cluster_weight);
-    }
 
     return clusters();
   }
@@ -1061,12 +1065,24 @@ private:
           auto [old_it, old_inserted] = handle.insert_or_update(
               old_label + 1, -weight, [&](auto &lhs, auto &rhs) { return lhs -= rhs; }, weight
           );
+          auto it = _unowned_clusters_local_weight.find(old_label);
+          if (it != _unowned_clusters_local_weight.end()) {
+            it->second -= weight;
+          } else {
+            _unowned_clusters_local_weight.insert(std::make_pair(old_label, -weight));
+          }
         }
 
         if (!_graph->is_owned_global_node(new_label)) {
           auto [new_it, new_inserted] = handle.insert_or_update(
               new_label + 1, weight, [&](auto &lhs, auto &rhs) { return lhs += rhs; }, weight
           );
+          auto it = _unowned_clusters_local_weight.find(new_label);
+          if (it != _unowned_clusters_local_weight.end()) {
+            it->second += weight;
+          } else {
+            _unowned_clusters_local_weight.insert(std::make_pair(new_label, weight));
+          }
         }
       }
     });
@@ -1086,29 +1102,159 @@ private:
     _last_handled_node_weight = u;
   }
 
+  /**
+     * alternatively if I just move back the nodes to their original clusters
+     * I can also do so initially when I get the lock message
+     * PROBLEM: I don't know which nodes to move back
+     * SOLUTION: iterate backwards from last handled node (_last_handled_node_weight)
+     * might lead to other problems, keep this method in mind for later
+     * possible problems:
+     *  - when moving the nodes to their original clusters, 
+     *    those might be or become overweight, but they won't be handled
+     *  - possibly huge overhead because of multiple searches over the same range
+     *    (may have to revert multiple moves)
+    */
   /** // TODO
    * used to fix overweight clusters
-   * @return whether there were overweight clusters
   */
-  bool fix_overweight_clusters(const DistributedGraph &graph) {
+  void fix_overweight_clusters(const DistributedGraph &graph) {
+
+    SCOPED_TIMER("Handle Overweight Clusters");
 
     mpi::barrier(_graph->communicator());
 
-    struct Message {
-
-    };
     /**
      * ask owning pe for each locked cluster's weight
      * owning pe counts the number of pes that have asked for each cluster
      * and sends back the number of pes and the part of the weight exceeding the limit
      * PROBLEM: the pes might not have made as many moves as they have to revert
-     * SOLUTION: pes send the local weight of the cluster aswell (this is not tracked though)
+     * SOLUTION: pes send the local weight of the cluster aswell, 
+     *           so that the owning PE can send how much should be reverted for each pe
+     * PROBLEM: local weight of unowned cluster is not tracked
+     * SOLUTION: create new hashmap to track the local weight of those clusters
     */
+
+    const PEID size = mpi::get_comm_size(_graph->communicator());
+
+    struct Message {
+      GlobalNodeID cluster;
+      GlobalNodeWeight delta; // local cluster weight
+    };
+
+    START_TIMER("Allocation");
+    std::vector<std::vector<Message>> out_msgs(size);
+    STOP_TIMER();
+
+    START_TIMER("Create Messages");
+    for (const auto& element : _global_locked_clusters) {
+      PEID owner = _graph->find_owner_of_global_node(element);
+      out_msgs[owner].push_back({ .cluster = element, .delta = _unowned_clusters_local_weight.find(element)->second });
+    }
+    STOP_TIMER();
+
+    START_TIMER("Allocation");
+    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) { out_msgs[pe].resize(out_msgs[pe].size()); });
+    STOP_TIMER();
+
+    mpi::barrier(_graph->communicator());
+
+    START_TIMER("Exchange messages");
+    auto in_msgs = mpi::sparse_alltoall_get<Message>(out_msgs, _graph->communicator());
+    STOP_TIMER();
+
+    mpi::barrier(_graph->communicator());
+
+    google::dense_hash_map<ClusterID, GlobalNodeWeight> new_cluster_weight;
+    new_cluster_weight.set_empty_key(std::numeric_limits<ClusterID>::max());
+    new_cluster_weight.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
+
+    START_TIMER("Integrate messages");
+    /**
+     * owning PE
+     * calculate the part of the cluster weight, that has to be reverted per PE and cluster
+     * use owned local cluster weight as reference
+     * delta: weight to be reverted
+    */
+    for (PEID pe = 0; pe < size; ++pe) {
+      for (size_t i = 0; i < in_msgs[pe].size(); ++i) {
+        const auto [cluster, delta] = in_msgs[pe][i];
+        GlobalNodeWeight pe_remote_weight = delta;
+        const GlobalNodeWeight total_weight = cluster_weight(cluster);
+
+        auto it = new_cluster_weight.find(cluster);
+        if (it == new_cluster_weight.end()) {
+          new_cluster_weight.insert(std::make_pair(cluster, 0));
+        }
+
+        if (total_weight > _max_cluster_weight) {
+          GlobalNodeWeight increase_by_pe = pe_remote_weight;
+          GlobalNodeWeight increase_by_others = total_weight - _max_cluster_weight - increase_by_pe;
+          
+          if (_c_ctx.global_lp.enforce_legacy_weight) {
+            GlobalNodeWeight weight_to_remove = (1.0 * increase_by_pe / increase_by_others) *
+                                                   (total_weight - _max_cluster_weight);
+            in_msgs[pe][i].delta = weight_to_remove;
+            new_cluster_weight.find(cluster)->second -= weight_to_remove;
+
+          } else {
+            GlobalNodeWeight weight_to_remove = (1.0 * increase_by_pe / (increase_by_others + increase_by_pe)
+                                      ) * (total_weight - _max_cluster_weight);
+            in_msgs[pe][i].delta = weight_to_remove;
+            new_cluster_weight.find(cluster)->second -= weight_to_remove;
+          }
+        } else {
+          in_msgs[pe][i].delta = 0;
+        }
+
+      }
+    }
+    // modifying owned cluster weight with the changes on remote PEs
+    for (const auto [cluster, weight_to_remove] : new_cluster_weight) {
+      change_cluster_weight(cluster, weight_to_remove, true);
+      if (cluster_weight(cluster) < _max_cluster_weight && is_cluster_locked(graph, cluster)) {
+        unlock_cluster(graph, cluster);
+      }
+    }
+    STOP_TIMER();
+
+    mpi::barrier(_graph->communicator());
+
+    START_TIMER("Exchange messages");
+    auto in_resps = mpi::sparse_alltoall_get<Message>(in_msgs, _graph->communicator());
+    STOP_TIMER();
+
+    for (PEID pe = 0; pe < size; ++pe) {
+      for (size_t i = 0; i < in_resps[pe].size(); ++i) {
+        const auto [cluster, delta] = in_resps[pe][i];
+        change_cluster_weight(cluster, delta, true);
+        if (cluster_weight(cluster) > _max_cluster_weight && !is_cluster_locked(graph, cluster)) {
+          lock_cluster(graph, cluster);
+        }
+      }
+    }
 
     /**
-     * need to send to certain target PE that might not be a neighbor
+     * just revert the nodes to their previous clusters
+     * need to keep track of weight, may need to lock new clusters
     */
+    START_TIMER("Enforce cluster weights");
+    _graph->pfor_nodes(0, graph.n(), [&](const NodeID u) {
+      const GlobalNodeID old_label = _changed_label[u];
+      if (old_label == kInvalidGlobalNodeID) {
+        return;
+      }
 
+      const GlobalNodeID new_label = cluster(u);
+      const GlobalNodeWeight new_label_weight = cluster_weight(new_label);
+      if (new_label_weight > _max_cluster_weight) {
+        move_node(u, old_label);
+        move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
+        if (cluster_weight(old_label) > _max_cluster_weight && !is_cluster_locked(graph, old_label)) {
+          lock_cluster(graph, old_label);
+        }
+      }
+    });
+    STOP_TIMER();
   }
 
   /**
@@ -1252,9 +1398,15 @@ private:
   // used to lock global clusters to prevent too many moves to full clusters
   google::dense_hash_set<ClusterID> _global_locked_clusters;
 
+  // weights message queue
   WeightsMessageQueue _w_queue;
 
+  // label message queue
   MessageQueue _queue;
+
+  // used to track the total local weights of unowned clusters (key, value) = (clusterID, localDelta)
+  // could alternatively use growt WeightDeltaMap here
+  google::dense_hash_map<ClusterID, GlobalNodeWeight> _unowned_clusters_local_weight;
 };
 
 //
