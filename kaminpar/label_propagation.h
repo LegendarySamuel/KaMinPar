@@ -706,6 +706,7 @@ protected:
  */
 template <typename Derived, typename Config> class MQLabelPropagationBase : public LabelPropagation<Derived, Config> {
 
+protected:
   using MQBase = LabelPropagation<Derived, Config>;
   using Graph = typename MQBase::Graph;
   using ClusterID = typename MQBase::ClusterID;
