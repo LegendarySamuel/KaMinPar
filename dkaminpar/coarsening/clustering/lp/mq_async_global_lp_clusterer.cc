@@ -122,7 +122,8 @@ struct LabelSplitter {
                   auto message = chunk | ranges::views::drop(3)
                                        | ranges::views::chunk(2)
                                        | std::ranges::views::transform([&](auto const& chunk) {
-                                            return LabelMessage(static_cast<uint32_t>(chunk[0]), chunk[1]);
+                                            return LabelMessage{ 
+                                              .owner_lnode = static_cast<uint32_t>(chunk[0]), .new_gcluster = chunk[1]};
                                           });
 
                   return message_queue::MessageEnvelope{
@@ -167,19 +168,46 @@ static_assert(message_queue::aggregation::EstimatingMerger<WeightsMerger, Weight
  * Weights Splitter
 */
 struct WeightsSplitter {
-  auto operator()(message_queue::MPIBuffer<uint64_t> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
-    return buffer | std::ranges::views::split(-1) | std::ranges::views::transform([](auto&& chunk) {
-                auto sender = chunk[0];
-                auto receiver = chunk[1];
-                auto tag = chunk[2];
-                auto message = chunk | ranges::views::drop(3)
-                                     | ranges::views::chunk(2)
-                                     | std::ranges::views::transform([&](auto const& chunk) {
-                                          return WeightsMessage(chunk[0] >> 62, chunk[0] & ((1ULL << 62) - 1), static_cast<int64_t>(chunk[1]));
-                                        });
-               return message_queue::MessageEnvelope{
-                    .message = std::move(message), .sender = static_cast<int>(sender), .receiver = static_cast<int>(receiver), .tag = static_cast<int>(tag)};
-            });
+  auto operator()(std::vector<uint64_t> const& buffer, PEID buffer_origin, PEID my_rank) const {
+    std::vector<message_queue::MessageEnvelope<std::vector<WeightsMessage>>> split_range;
+    auto it = buffer.begin();
+    size_t counter = 0;
+    uint64_t buffered_element;
+    int sender;
+    int receiver;
+    int tag;
+    std::vector<WeightsMessage> message;
+    while (it != buffer.end()) {
+      uint64_t element = *it;
+      if (element == -1) {
+        split_range.push_back(message_queue::MessageEnvelope{
+          .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag
+        });
+        message = std::vector<WeightsMessage>();
+        ++it;
+        counter = 0;
+        continue;
+      }
+      if (counter == 0) {
+        sender = static_cast<int>(element);
+      } else if (counter == 1) {
+        receiver = static_cast<int>(element);
+      } else if (counter == 2) {
+        tag = static_cast<int>(element);
+      } else if (counter % 2 == 1) {
+        buffered_element = element;
+      } else /*counter%2 == 0*/ {
+        message.push_back(WeightsMessage{
+          .flag = buffered_element >> 62, .clusterID = buffered_element & ((1ULL << 62) - 1), .delta = static_cast<int64_t>(element)
+        });
+      }
+      ++it;
+      ++counter;
+    }
+    split_range.push_back(message_queue::MessageEnvelope{
+      .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag
+    });
+    return std::move(split_range);
   }
 };
 static_assert(message_queue::aggregation::Splitter<WeightsSplitter, WeightsMessage, std::vector<uint64_t>>);
