@@ -272,10 +272,14 @@ public:
     if (_ctx.msg_q_context.lock_then_retry) {
       _global_locked_clusters.set_empty_key(std::numeric_limits<ClusterID>::max());
       _global_locked_clusters.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
+      
       std::fill(_local_locked_clusters.begin(), _local_locked_clusters.end(), 0);
+      
       _unowned_clusters_local_weight.set_empty_key(std::numeric_limits<ClusterID>::max());
-      _unowned_clusters_local_weight.set_deleted_key(std::numeric_limits<ClusterID>::max());
+      _unowned_clusters_local_weight.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
 
+      _weight_deltas.set_empty_key(std::numeric_limits<ClusterID>::max());
+      _weight_deltas.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
     }
 
     // Initialize data structures
@@ -348,7 +352,7 @@ public:
           // weight handling here 
           handle_cluster_weights(u);
         }
-
+        
         // if should handle messages now: handle messages
         if (label_msg_counter < _ctx.msg_q_context.message_handle_threshold) {
           ++label_msg_counter;
@@ -376,7 +380,7 @@ public:
       // terminate and reactivate queue
       handle_cluster_weights(graph.n() - 1);
       terminate_queue();
-      terminate_weights_queue(graph.n() - 1, graph);
+      terminate_weights_queue(graph);
       _w_queue.reactivate();
       _queue.reactivate();
 
@@ -385,7 +389,7 @@ public:
       });
 
       // cleanup: handle overweight clusters
-      if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry) { 
+      if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry) {
         fix_overweight_clusters(graph);
       }
     }
@@ -393,7 +397,7 @@ public:
     // finish handling labels before returning
     handle_cluster_weights(graph.n() - 1);
     terminate_queue();
-    terminate_weights_queue(graph.n() - 1, graph);
+    terminate_weights_queue(graph);
 
     // free unused communicator
     MPI_Comm_free(&_w_comm);
@@ -564,7 +568,7 @@ public:
             (state.current_gain == state.best_gain && state.local_rand.random_bool())) &&
            (state.current_cluster_weight + state.u_weight <=
                 max_cluster_weight(state.current_cluster) ||
-            state.current_cluster == state.initial_cluster) && is_cluster_locked(*_graph, state.current_cluster);
+            state.current_cluster == state.initial_cluster) && !is_cluster_locked(*_graph, state.current_cluster);
   }
 
   [[nodiscard]] inline bool activate_neighbor(const NodeID u) {
@@ -616,7 +620,7 @@ private:
     });
   }
 
-  void control_cluster_weights(const NodeID from, const NodeID to) {
+  /*void control_cluster_weights(const NodeID from, const NodeID to) {
     START_TIMER("Synchronize cluster weights");
 
     if (!should_sync_cluster_weights()) {
@@ -776,7 +780,7 @@ private:
       }
     });
     STOP_TIMER();
-  }
+  }*/
 
   /**
    * label propagation for one node
@@ -817,11 +821,11 @@ private:
    * provides messge handler for label message queue
   */
   auto get_message_handler() {
-    return [&](message_queue::Envelope<LabelMessage> auto const& envelope) {
+    return [&](message_queue::Envelope<LabelMessage> auto && envelope) {
       
       // handle received messages
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, envelope.message.size()), [&](const auto &r) {
-        auto &weight_delta_handle = _weight_delta_handles_ets.local();
+        //auto &weight_delta_handle = _weight_delta_handles_ets.local();
 
         // iterate for each interface node, that has received an update
         for (std::size_t i = r.begin(); i != r.end(); ++i) {
@@ -832,11 +836,13 @@ private:
 
           const NodeID lnode = _graph->global_to_local_node(gnode);
               
-          const NodeWeight weight = _graph->node_weight(lnode);
+          //const NodeWeight weight = _graph->node_weight(lnode);
 
           const GlobalNodeID old_gcluster = cluster(lnode);
 
-          // If we synchronize the weights of clusters with local
+          //TODO check: probably not needed, since ghost node cluster changes are made at the end, may be needed if !should_sync_cluster_weights()
+
+          /*// If we synchronize the weights of clusters with local
           // changes, we already have the right weight including ghost
           // vertices --> only update weight if we did not get an update
 
@@ -845,12 +851,12 @@ private:
             change_cluster_weight(old_gcluster, -weight, true);
           }
 
-          // move node to the newly assigned cluster
+          // move node to the newly assigned cluster*/
           NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
-          if (!should_sync_cluster_weights() ||
+          /*if (!should_sync_cluster_weights() ||
               weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
             change_cluster_weight(new_gcluster, weight, false);
-          }
+          }*/
         }
       });
     };
@@ -870,10 +876,10 @@ private:
    * provides messge handler for weights message queue lock then retry strategy
    * @var u the NodeID of the node currently being processed
   */
-  auto get_weights_message_handler(const NodeID u, const DistributedGraph &graph) {
+  auto get_weights_message_handler(const DistributedGraph &graph) {
 
     /***************************** message handling ******************************/
-    return [&](message_queue::Envelope<WeightsMessage> auto const &&envelope) {
+    return [&](message_queue::Envelope<WeightsMessage> auto &&envelope) {
 
       /**
        * |-- handle message (if available) (flag 2)
@@ -893,20 +899,20 @@ private:
           throw std::invalid_argument("Flag is invalid.");
         } else if (flag == 1) {
           // received a message containing a weight change
-          // in case of indirection: may need to send it to the receiver
+          // in case of indirection: may need to send it to the receiver  // TODO later
           
           if (envelope.receiver == rank) {
             // case: cluster is owned
 
             // apply weight change
             change_cluster_weight(cluster, delta, false);
-            // if cluster is now too heave, send cluster-lock
+            // if cluster is now too heavy, send cluster-lock
             if (cluster_weight(cluster) >= _max_cluster_weight) {
               _w_queue.post_message({ .flag = 2, .clusterID = cluster, .delta = 0 }, envelope.sender);
             }
           } else {
             // case: cluster is not owned -> need to redirect
-            _w_queue.post_message(envelope.message, envelope.receiver, envelope.sender, envelope.receiver, 0);
+            _w_queue.post_message(std::move(envelope.message), envelope.receiver, envelope.sender, envelope.receiver, 0);
             break;
           }
         } else if (flag == 2) {
@@ -918,13 +924,13 @@ private:
   }
 
   // handle weights messages
-  bool handle_weights_messages(const NodeID u, const DistributedGraph &graph) {
-    return _w_queue.poll(get_weights_message_handler(u, graph));
+  bool handle_weights_messages(const DistributedGraph &graph) {
+    return _w_queue.poll(get_weights_message_handler(graph));
   }
 
   // terminate weights queue; need to make changes
-  bool terminate_weights_queue(const NodeID u, const DistributedGraph &graph) {
-    return _w_queue.terminate(get_weights_message_handler(u, graph));
+  bool terminate_weights_queue(const DistributedGraph &graph) {
+    return _w_queue.terminate(get_weights_message_handler(graph));
   }
   
   /** @deprecated
@@ -1056,6 +1062,7 @@ private:
     _last_handled_node_weight = u;
   }*/
 
+  // TODO maybe just handle weight for every node separately (not necessary)
   /**
    * weight handling by lock then retry strategy
    * this strategy probably does not get very good results if the update rate is too low
@@ -1064,7 +1071,7 @@ private:
   void handle_cluster_weights(const NodeID u) {
     SCOPED_TIMER("Synchronize cluster weights");
 
-    if (!should_sync_cluster_weights()) {
+    if (!should_sync_cluster_weights() || !_ctx.msg_q_context.lock_then_retry) {
       return;
     }
 
@@ -1078,21 +1085,18 @@ private:
     // posting messages for interval [_last_handled_node_weight, u]
     /********************************* setting up and creating messages **************************************/
     // clearing temporary weight delta map
-    _weight_delta_handles_ets.clear();
-    _weight_deltas = WeightDeltaMap(0);
+    _weight_deltas.clear_no_resize();
 
     // aggregating weight changes for clusters
     _graph->pfor_nodes(_last_handled_node_weight, u, [&](const NodeID u) {
       if (_changed_label[u] != kInvalidGlobalNodeID) {
-        auto &handle = _weight_delta_handles_ets.local();
         const GlobalNodeID old_label = _changed_label[u];
         const GlobalNodeID new_label = cluster(u);
         const NodeWeight weight = _graph->node_weight(u);
 
         if (!_graph->is_owned_global_node(old_label)) {
-          auto [old_it, old_inserted] = handle.insert_or_update(
-              old_label + 1, -weight, [&](auto &lhs, auto &rhs) { return lhs -= rhs; }, weight
-          );
+          _weight_deltas[old_label] -= weight;
+
           auto it = _unowned_clusters_local_weight.find(old_label);
           if (it != _unowned_clusters_local_weight.end()) {
             it->second -= weight;
@@ -1102,9 +1106,8 @@ private:
         }
 
         if (!_graph->is_owned_global_node(new_label)) {
-          auto [new_it, new_inserted] = handle.insert_or_update(
-              new_label + 1, weight, [&](auto &lhs, auto &rhs) { return lhs += rhs; }, weight
-          );
+          _weight_deltas[new_label] += weight;
+
           auto it = _unowned_clusters_local_weight.find(new_label);
           if (it != _unowned_clusters_local_weight.end()) {
             it->second += weight;
@@ -1116,15 +1119,15 @@ private:
     });
 
     // post messages
-    growt::pfor_handles(
-        _weight_delta_handles_ets,
-        [&](const GlobalNodeID gcluster_p1, const GlobalNodeWeight weight) {
-          const GlobalNodeID gcluster = gcluster_p1 - 1;
-          const PEID owner = _graph->find_owner_of_global_node(gcluster);
-          // TODO could add indirection here
-          _w_queue.post_message({ .flag = 1, .clusterID = gcluster, .delta = weight }, owner);
-        }
-    );
+    for (const auto& [gcluster, weight] : _weight_deltas) {
+        const PEID owner = _graph->find_owner_of_global_node(gcluster);
+          
+        // TODO could add indirection here
+        _w_queue.post_message({ .flag = 1, .clusterID = gcluster, .delta = weight }, owner);
+    }
+    
+    // handle received messages
+    handle_weights_messages(*(_graph));
     
     // set _last_handled_node_weight
     _last_handled_node_weight = u;
@@ -1192,6 +1195,8 @@ private:
 
     mpi::barrier(_graph->communicator());
 
+    // map that tracks the new local weight of owned clusters after the changes
+    // on remote PEs have been applied
     google::dense_hash_map<ClusterID, GlobalNodeWeight> new_cluster_weight;
     new_cluster_weight.set_empty_key(std::numeric_limits<ClusterID>::max());
     new_cluster_weight.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
@@ -1289,6 +1294,9 @@ private:
    * check if cluster is locked
   */
   bool is_cluster_locked(const DistributedGraph &graph, ClusterID cluster) {
+    if (!_ctx.msg_q_context.lock_then_retry) {
+      return false;
+    }
     if (graph.is_owned_global_node(cluster)) {
       NodeID l_cluster = graph.global_to_local_node(cluster);
       return _local_locked_clusters[l_cluster];
@@ -1304,6 +1312,9 @@ private:
    * lock a cluster
   */
   void lock_cluster(const DistributedGraph &graph, ClusterID cluster) {
+    if (!_ctx.msg_q_context.lock_then_retry) {
+      return;
+    }
     if (graph.is_owned_global_node(cluster)) {
       NodeID l_cluster = graph.global_to_local_node(cluster);
       _local_locked_clusters[l_cluster] = 1;
@@ -1317,6 +1328,9 @@ private:
    * unlock a cluster
   */
   void unlock_cluster(const DistributedGraph &graph, ClusterID cluster) {
+    if (!_ctx.msg_q_context.lock_then_retry) {
+      return;
+    }
     if (graph.is_owned_global_node(cluster)) {
       NodeID l_cluster = graph.global_to_local_node(cluster);
       _local_locked_clusters[l_cluster] = 0;
@@ -1408,10 +1422,13 @@ private:
   // neighbors if set to 0
   EdgeID _passive_high_degree_threshold = 0;
 
-  WeightDeltaMap _weight_deltas{0};
+  /*WeightDeltaMap _weight_deltas{0};
   tbb::enumerable_thread_specific<WeightDeltaMap::handle_type> _weight_delta_handles_ets{[this] {
     return _weight_deltas.get_handle();
-  }};
+  }};*/
+
+  // used to track how much weight was newly added to the unowned cluster
+  google::dense_hash_map<ClusterID, GlobalNodeWeight> _weight_deltas;
 
   // the last node of which the weight has been handled
   NodeID _last_handled_node_weight = 0;
