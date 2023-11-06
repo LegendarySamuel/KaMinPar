@@ -373,7 +373,7 @@ public:
         cluster_isolated_nodes(0, graph.n());
       }
 
-      // if noting changed during the iteration, end clustering
+      // if nothing changed during the iteration, end clustering
       if (global_num_moved_nodes == 0) {
         break;
       }
@@ -384,14 +384,14 @@ public:
       _w_queue.reactivate();
       _queue.reactivate();
 
-      _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
-        _changed_label[lnode] = kInvalidGlobalNodeID;
-      });
-
       // cleanup: handle overweight clusters
       if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry) {
         fix_overweight_clusters(graph);
       }
+
+      _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
+        _changed_label[lnode] = kInvalidGlobalNodeID;
+      });
     }
     
     // finish handling labels before returning
@@ -1079,6 +1079,7 @@ private:
 
     // no need to fix clustering yet
     if (u < (_max_cluster_weight/size)) {
+      _last_handled_node_weight = _max_cluster_weight/size;
       return;
     }
 
