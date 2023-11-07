@@ -392,10 +392,12 @@ public:
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
+
+      // clear the hashmap for the next iteration
+      _unowned_clusters_local_weight.clear_no_resize();
     }
     
-    // finish handling labels before returning
-    handle_cluster_weights(graph.n() - 1);
+    // terminate queues
     terminate_queue();
     terminate_weights_queue(graph);
 
@@ -620,168 +622,6 @@ private:
     });
   }
 
-  /*void control_cluster_weights(const NodeID from, const NodeID to) {
-    START_TIMER("Synchronize cluster weights");
-
-    if (!should_sync_cluster_weights()) {
-      return;
-    }
-
-    const PEID size = mpi::get_comm_size(_graph->communicator());
-
-    START_TIMER("Allocation");
-    _weight_delta_handles_ets.clear();
-    _weight_deltas = WeightDeltaMap(0);
-    std::vector<parallel::Atomic<std::size_t>> num_messages(size);
-    STOP_TIMER();
-
-    START_TIMER("Fill hash table");
-    _graph->pfor_nodes(from, to, [&](const NodeID u) {
-      if (_changed_label[u] != kInvalidGlobalNodeID) {
-        auto &handle = _weight_delta_handles_ets.local();
-        const GlobalNodeID old_label = _changed_label[u];
-        const GlobalNodeID new_label = cluster(u);
-        const NodeWeight weight = _graph->node_weight(u);
-
-        if (!_graph->is_owned_global_node(old_label)) {
-          auto [old_it, old_inserted] = handle.insert_or_update(
-              old_label + 1, -weight, [&](auto &lhs, auto &rhs) { return lhs -= rhs; }, weight
-          );
-          if (old_inserted) {
-            const PEID owner = _graph->find_owner_of_global_node(old_label);
-            ++num_messages[owner];
-          }
-        }
-
-        if (!_graph->is_owned_global_node(new_label)) {
-          auto [new_it, new_inserted] = handle.insert_or_update(
-              new_label + 1, weight, [&](auto &lhs, auto &rhs) { return lhs += rhs; }, weight
-          );
-          if (new_inserted) {
-            const PEID owner = _graph->find_owner_of_global_node(new_label);
-            ++num_messages[owner];
-          }
-        }
-      }
-    });
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    struct Message {
-      GlobalNodeID cluster;
-      GlobalNodeWeight delta;
-    };
-
-    START_TIMER("Allocation");
-    std::vector<NoinitVector<Message>> out_msgs(size);
-    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) { out_msgs[pe].resize(num_messages[pe]); });
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    START_TIMER("Create messages");
-    growt::pfor_handles(
-        _weight_delta_handles_ets,
-        [&](const GlobalNodeID gcluster_p1, const GlobalNodeWeight weight) {
-          const GlobalNodeID gcluster = gcluster_p1 - 1;
-          const PEID owner = _graph->find_owner_of_global_node(gcluster);
-          const std::size_t index = num_messages[owner].fetch_sub(1) - 1;
-          out_msgs[owner][index] = {.cluster = gcluster, .delta = weight};
-        }
-    );
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    START_TIMER("Exchange messages");
-    auto in_msgs = mpi::sparse_alltoall_get<Message>(out_msgs, _graph->communicator());
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    START_TIMER("Integrate messages");
-    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
-      tbb::parallel_for<std::size_t>(0, in_msgs[pe].size(), [&](const std::size_t i) {
-        const auto [cluster, delta] = in_msgs[pe][i];
-        change_cluster_weight(cluster, delta, false);
-      });
-    });
-
-    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
-      tbb::parallel_for<std::size_t>(0, in_msgs[pe].size(), [&](const std::size_t i) {
-        const auto [cluster, delta] = in_msgs[pe][i];
-        in_msgs[pe][i].delta = cluster_weight(cluster);
-      });
-    });
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    START_TIMER("Exchange messages");
-    auto in_resps = mpi::sparse_alltoall_get<Message>(in_msgs, _graph->communicator());
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    START_TIMER("Integrate messages");
-    parallel::Atomic<std::uint8_t> violation = 0;
-    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
-      tbb::parallel_for<std::size_t>(0, in_resps[pe].size(), [&](const std::size_t i) {
-        const auto [cluster, delta] = in_resps[pe][i];
-        GlobalNodeWeight new_weight = delta;
-        const GlobalNodeWeight old_weight = cluster_weight(cluster);
-
-        if (delta > _max_cluster_weight) {
-          const GlobalNodeWeight increase_by_others = new_weight - old_weight;
-
-          auto &handle = _weight_delta_handles_ets.local();
-          auto it = handle.find(cluster + 1);
-          KASSERT(it != handle.end());
-          const GlobalNodeWeight increase_by_me = (*it).second;
-
-          violation = 1;
-          if (_c_ctx.global_lp.enforce_legacy_weight) {
-            new_weight = _max_cluster_weight + (1.0 * increase_by_me / increase_by_others) *
-                                                   (new_weight - _max_cluster_weight);
-          } else {
-            new_weight =
-                _max_cluster_weight + (1.0 * increase_by_me / (increase_by_others + increase_by_me)
-                                      ) * (new_weight - _max_cluster_weight);
-          }
-        }
-        change_cluster_weight(cluster, -old_weight + new_weight, true);
-      });
-    });
-    STOP_TIMER();
-
-    mpi::barrier(_graph->communicator());
-
-    STOP_TIMER();
-
-    // If we detected a max cluster weight violation, remove node weight
-    // proportional to our chunk of the cluster weight
-    if (!should_enforce_cluster_weights() || !violation) {
-      return;
-    }
-
-    START_TIMER("Enforce cluster weights");
-    _graph->pfor_nodes(from, to, [&](const NodeID u) {
-      const GlobalNodeID old_label = _changed_label[u];
-      if (old_label == kInvalidGlobalNodeID) {
-        return;
-      }
-
-      const GlobalNodeID new_label = cluster(u);
-      const GlobalNodeWeight new_label_weight = cluster_weight(new_label);
-      if (new_label_weight > _max_cluster_weight) {
-        move_node(u, old_label);
-        move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
-      }
-    });
-    STOP_TIMER();
-  }*/
-
   /**
    * label propagation for one node
   */
@@ -825,8 +665,6 @@ private:
       
       // handle received messages
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, envelope.message.size()), [&](const auto &r) {
-        //auto &weight_delta_handle = _weight_delta_handles_ets.local();
-
         // iterate for each interface node, that has received an update
         for (std::size_t i = r.begin(); i != r.end(); ++i) {
           const auto [owner_lnode, new_gcluster] = envelope.message[i];
@@ -836,27 +674,22 @@ private:
 
           const NodeID lnode = _graph->global_to_local_node(gnode);
               
-          //const NodeWeight weight = _graph->node_weight(lnode);
+          const NodeWeight weight = _graph->node_weight(lnode);
 
           const GlobalNodeID old_gcluster = cluster(lnode);
 
-          //TODO check: probably not needed, since ghost node cluster changes are made at the end, may be needed if !should_sync_cluster_weights()
+          // we do not adjust the clusters' weights with the additional weight of ghost nodes
+          // we get the actual weights when we try to move local nodes to the clusters
 
-          /*// If we synchronize the weights of clusters with local
-          // changes, we already have the right weight including ghost
-          // vertices --> only update weight if we did not get an update
-
-          if (!should_sync_cluster_weights() ||
-              weight_delta_handle.find(old_gcluster + 1) == weight_delta_handle.end()) {
+          if (!should_sync_cluster_weights()) {
             change_cluster_weight(old_gcluster, -weight, true);
           }
 
-          // move node to the newly assigned cluster*/
           NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
-          /*if (!should_sync_cluster_weights() ||
-              weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
+
+          if (!should_sync_cluster_weights()) {
             change_cluster_weight(new_gcluster, weight, false);
-          }*/
+          }
         }
       });
     };
@@ -932,135 +765,6 @@ private:
   bool terminate_weights_queue(const DistributedGraph &graph) {
     return _w_queue.terminate(get_weights_message_handler(graph));
   }
-  
-  /** @deprecated
-   * handle cluster weights in order to keep the weight restraint
-   *
-  */ 
-  /*void handle_cluster_weights(const NodeID u, const DistributedGraph &graph) {
-    SCOPED_TIMER("Synchronize cluster weights");
-
-    if (!should_sync_cluster_weights()) {
-      return;
-    }
-
-    const PEID size = mpi::get_comm_size(_w_comm);
-
-    // no need to fix clustering yet
-    if (u < (_max_cluster_weight/size)) {
-      return;
-    }
-    // posting messages for interval [_last_handled_node_weight, u]
-    _weight_delta_handles_ets.clear();
-    _weight_deltas = WeightDeltaMap(0);
-    std::vector<parallel::Atomic<std::size_t>> num_messages(size);
-
-    // aggregating weight changes for clusters
-    _graph->pfor_nodes(_last_handled_node_weight, u, [&](const NodeID u) {
-      if (_changed_label[u] != kInvalidGlobalNodeID) {
-        auto &handle = _weight_delta_handles_ets.local();
-        const GlobalNodeID old_label = _changed_label[u];
-        const GlobalNodeID new_label = cluster(u);
-        const NodeWeight weight = _graph->node_weight(u);
-
-        if (!_graph->is_owned_global_node(old_label)) {
-          auto [old_it, old_inserted] = handle.insert_or_update(
-              old_label + 1, -weight, [&](auto &lhs, auto &rhs) { return lhs -= rhs; }, weight
-          );
-          if (old_inserted) {
-            const PEID owner = _graph->find_owner_of_global_node(old_label);
-            ++num_messages[owner];
-          }
-        }
-
-        if (!_graph->is_owned_global_node(new_label)) {
-          auto [new_it, new_inserted] = handle.insert_or_update(
-              new_label + 1, weight, [&](auto &lhs, auto &rhs) { return lhs += rhs; }, weight
-          );
-          if (new_inserted) {
-            const PEID owner = _graph->find_owner_of_global_node(new_label);
-            ++num_messages[owner];
-          }
-        }
-      }
-    });
-
-    std::vector<NoinitVector<WeightsMessage>> out_msgs(size);
-    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) { out_msgs[pe].resize(num_messages[pe]); });
-
-    growt::pfor_handles(
-        _weight_delta_handles_ets,
-        [&](const GlobalNodeID gcluster_p1, const GlobalNodeWeight weight) {
-          const GlobalNodeID gcluster = gcluster_p1 - 1;
-          const PEID owner = _graph->find_owner_of_global_node(gcluster);
-          const std::size_t index = num_messages[owner].fetch_sub(1) - 1;
-          out_msgs[owner][index] = { .clusterID = gcluster, .delta = weight };
-        }
-    );
-
-    // post messages
-    for (int target = 0; target < size; target++) {
-      for (auto && msg: out_msgs[target]) {
-        _w_queue.post_message(msg, target);
-      }
-    }
-
-    _w_queue.flush_all_buffers();
-
-    parallel::Atomic<std::uint8_t> violation = 0;
-    std::vector<NoinitVector<GlobalNodeID>> owned_clusters(size);
-
-    // handle messages
-    bool not_empty = false;
-    do {
-      not_empty = handle_weights_messages(u, graph);
-    } while (not_empty);
-
-    // make message vectors to improve communication speed
-    std::vector<std::vector<WeightsMessage>> out_msg_vectors(size);
-    tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
-      for (GlobalNodeID c : owned_clusters[pe]) {
-        out_msg_vectors[pe].push_back({ .clusterID = c, .delta = cluster_weight(c) });
-      }
-    });
-    // send the owned cluster's total weights, if there has been a change
-    for (int pe = 0; pe < size; ++pe) {
-      _w_queue.post_message(std::move(out_msg_vectors[pe]), pe, 0);
-    }
-    
-    _w_queue.flush_all_buffers();
-
-    // handle messages
-    do {
-      not_empty = handle_weights_messages(u, graph);
-    } while (not_empty);
-
-    // TODO check nodes in reverse from _last_handled_node_weight, if the clusters are not conformative to the weight restraint
-    // If we detected a max cluster weight violation, remove node weight
-    // proportional to our chunk of the cluster weight
-    if (!should_enforce_cluster_weights() || !violation) {
-      return;
-    }
-
-    // TODO optimize the calculation, by setting the proper interval or posthandling
-    //_graph->pfor_nodes(_last_handled_node_weight, u, [&](const NodeID u) {
-    _graph->pfor_nodes(0, u, [&](const NodeID u) {
-      const GlobalNodeID old_label = _changed_label[u];
-      if (old_label == kInvalidGlobalNodeID) {
-        return;
-      }
-
-      const GlobalNodeID new_label = cluster(u);
-      const GlobalNodeWeight new_label_weight = cluster_weight(new_label);
-      if (new_label_weight > _max_cluster_weight) {
-        move_node(u, old_label);
-        move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
-      }
-    });
-
-    // set _last_handled_node_weight
-    _last_handled_node_weight = u;
-  }*/
 
   // TODO maybe just handle weight for every node separately (not necessary)
   /**
@@ -1180,7 +884,9 @@ private:
     START_TIMER("Create Messages");
     for (const auto& element : _global_locked_clusters) {
       PEID owner = _graph->find_owner_of_global_node(element);
-      out_msgs[owner].push_back({ .cluster = element, .delta = _unowned_clusters_local_weight.find(element)->second });
+      if (_unowned_clusters_local_weight.find(element) != _unowned_clusters_local_weight.end()) {
+        out_msgs[owner].push_back({ .cluster = element, .delta = _unowned_clusters_local_weight.find(element)->second });
+      }
     }
     STOP_TIMER();
 
@@ -1450,8 +1156,8 @@ private:
   // label message queue
   MessageQueue _queue;
 
-  // used to track the total local weights of unowned clusters (key, value) = (clusterID, localDelta)
-  // could alternatively use growt WeightDeltaMap here
+  // used to track the total local weight of unowned clusters (key, value) = (clusterID, localDelta),
+  // that was added during the current iteration
   google::dense_hash_map<ClusterID, GlobalNodeWeight> _unowned_clusters_local_weight;
 };
 
