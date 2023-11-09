@@ -351,6 +351,9 @@ public:
           
           // weight handling here 
           handle_cluster_weights(u);
+              
+          // handle received messages
+          handle_weights_messages(*(_graph));
         }
         
         // if should handle messages now: handle messages
@@ -360,6 +363,7 @@ public:
         } else {
           label_msg_counter = 0;
 
+          // handle received label messages
           handle_messages();
         }
       }
@@ -385,8 +389,9 @@ public:
       _queue.reactivate();
 
       // cleanup: handle overweight clusters
-      if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry) {
+      if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry && _violation) {
         fix_overweight_clusters(graph);
+        _violation = false;
       }
 
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
@@ -750,6 +755,9 @@ private:
           }
         } else if (flag == 2) {
           // received a message indicating that a cluster got locked
+          if (!_violation) {
+            _violation = true;
+          }
           lock_cluster(graph, cluster);
         }
       }
@@ -781,19 +789,11 @@ private:
 
     const PEID size = mpi::get_comm_size(_w_comm);
 
-    // no need to fix clustering yet
-    if (u < (_max_cluster_weight/size)) {
-      _last_handled_node_weight = _max_cluster_weight/size;
-      return;
-    }
-
-    // posting messages for interval [_last_handled_node_weight, u]
+    // posting messages for interval [_w_last_handled_node, u]
     /********************************* setting up and creating messages **************************************/
-    // clearing temporary weight delta map
-    _weight_deltas.clear_no_resize();
 
     // aggregating weight changes for clusters
-    _graph->pfor_nodes(_last_handled_node_weight, u, [&](const NodeID u) {
+    _graph->pfor_nodes(_w_last_handled_node, u, [&](const NodeID u) {
       if (_changed_label[u] != kInvalidGlobalNodeID) {
         const GlobalNodeID old_label = _changed_label[u];
         const GlobalNodeID new_label = cluster(u);
@@ -830,19 +830,19 @@ private:
         // TODO could add indirection here
         _w_queue.post_message({ .flag = 1, .clusterID = gcluster, .delta = weight }, owner);
     }
+
+    // clearing temporary weight delta map
+    _weight_deltas.clear_no_resize();
     
-    // handle received messages
-    handle_weights_messages(*(_graph));
-    
-    // set _last_handled_node_weight
-    _last_handled_node_weight = u;
+    // set _w_last_handled_node
+    _w_last_handled_node = u;
   }
 
   /**
      * alternatively if I just move back the nodes to their original clusters
      * I can also do so initially when I get the lock message
      * PROBLEM: I don't know which nodes to move back
-     * SOLUTION: iterate backwards from last handled node (_last_handled_node_weight)
+     * SOLUTION: iterate backwards from last handled node (_w_last_handled_node)
      * might lead to other problems, keep this method in mind for later
      * possible problems:
      *  - when moving the nodes to their original clusters, 
@@ -1129,16 +1129,11 @@ private:
   // neighbors if set to 0
   EdgeID _passive_high_degree_threshold = 0;
 
-  /*WeightDeltaMap _weight_deltas{0};
-  tbb::enumerable_thread_specific<WeightDeltaMap::handle_type> _weight_delta_handles_ets{[this] {
-    return _weight_deltas.get_handle();
-  }};*/
-
   // used to track how much weight was newly added to the unowned cluster
   google::dense_hash_map<ClusterID, GlobalNodeWeight> _weight_deltas;
 
   // the last node of which the weight has been handled
-  NodeID _last_handled_node_weight = 0;
+  NodeID _w_last_handled_node = 0;
 
   // MPI communicator for weights related communication
   MPI_Comm _w_comm;
@@ -1159,6 +1154,9 @@ private:
   // used to track the total local weight of unowned clusters (key, value) = (clusterID, localDelta),
   // that was added during the current iteration
   google::dense_hash_map<ClusterID, GlobalNodeWeight> _unowned_clusters_local_weight;
+
+  // whether there was a violation to the weight constraint during the iteration
+  bool _violation = false;
 };
 
 //
