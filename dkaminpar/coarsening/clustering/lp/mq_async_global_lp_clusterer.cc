@@ -90,9 +90,7 @@ struct LabelMerger {
     if (!buffer.empty()) {
           buffer.emplace_back(-1);  // sentinel
       }
-      buffer.emplace_back(static_cast<uint64_t>(envelope.sender));
-      buffer.emplace_back(static_cast<uint64_t>(envelope.receiver));
-      buffer.emplace_back(static_cast<uint64_t>(envelope.tag));
+      buffer.emplace_back(static_cast<uint64_t>(envelope.sender) << 32 | static_cast<uint64_t>(envelope.receiver));
       for (auto elem : envelope.message) {
           buffer.emplace_back(static_cast<uint64_t>(elem.owner_lnode));
           buffer.emplace_back(elem.new_gcluster);
@@ -103,7 +101,7 @@ struct LabelMerger {
                   PEID buffer_destination,
                   PEID my_rank,
                   message_queue::MessageEnvelope<MessageContainer> const& envelope) const {
-    return buffer.size() + envelope.message.size() * 2 + 4;
+    return buffer.size() + envelope.message.size() * 2 + 2;
   };
 };
 static_assert(message_queue::aggregation::Merger<LabelMerger, LabelMessage, std::vector<uint64_t>>);
@@ -116,10 +114,8 @@ struct LabelSplitter {
     decltype(auto) operator()(message_queue::MPIBuffer<uint64_t> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
       return buffer | std::ranges::views::split(-1)
                     | std::ranges::views::transform([](auto&& chunk) {
-                  auto sender = chunk[0];
-                  auto receiver = chunk[1];
-                  auto tag = chunk[2];
-                  auto message = chunk | ranges::views::drop(3)
+                  auto send_recv = chunk[0];
+                  auto message = chunk | ranges::views::drop(1)
                                        | ranges::views::chunk(2)
                                        | std::ranges::views::transform([&](auto const& chunk) {
                                             return LabelMessage{ 
@@ -127,7 +123,7 @@ struct LabelSplitter {
                                           });
 
                   return message_queue::MessageEnvelope{
-                      .message = std::move(message), .sender = static_cast<int>(sender), .receiver = static_cast<int>(receiver), .tag = static_cast<int>(tag)};
+                      .message = std::move(message), .sender = static_cast<int>(send_recv >> 32), .receiver = static_cast<int>(send_recv & ((1ULL << 32) - 1)), .tag = 0};
               });
     }
 };
@@ -145,9 +141,7 @@ struct WeightsMerger {
     if (!buffer.empty()) {
           buffer.emplace_back(-1);  // sentinel
       }
-      buffer.emplace_back(static_cast<uint64_t>(envelope.sender));
-      buffer.emplace_back(static_cast<uint64_t>(envelope.receiver));
-      buffer.emplace_back(static_cast<uint64_t>(envelope.tag));
+      buffer.emplace_back(static_cast<uint64_t>(envelope.sender) << 32 | static_cast<uint64_t>(envelope.receiver));
       for (auto elem : envelope.message) {
           buffer.emplace_back(static_cast<uint64_t>(elem.flag) << 62 | static_cast<uint64_t>(elem.clusterID));
           buffer.emplace_back(static_cast<uint64_t>(elem.delta));
@@ -158,7 +152,7 @@ struct WeightsMerger {
                   PEID buffer_destination,
                   PEID my_rank,
                   message_queue::MessageEnvelope<MessageContainer> const& envelope) const {
-    return buffer.size() + envelope.message.size() * 2 + 4;
+    return buffer.size() + envelope.message.size() * 2 + 2;
   };
 };
 static_assert(message_queue::aggregation::Merger<WeightsMerger, WeightsMessage, std::vector<uint64_t>>);
@@ -175,13 +169,12 @@ struct WeightsSplitter {
     uint64_t buffered_element;
     int sender;
     int receiver;
-    int tag;
     std::vector<WeightsMessage> message;
     while (it != buffer.end()) {
       uint64_t element = *it;
       if (element == -1) {
         split_range.push_back(message_queue::MessageEnvelope{
-          .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag
+          .message = std::move(message), .sender = sender, .receiver = receiver, .tag = 0
         });
         message = std::vector<WeightsMessage>();
         ++it;
@@ -189,11 +182,8 @@ struct WeightsSplitter {
         continue;
       }
       if (counter == 0) {
-        sender = static_cast<int>(element);
-      } else if (counter == 1) {
-        receiver = static_cast<int>(element);
-      } else if (counter == 2) {
-        tag = static_cast<int>(element);
+        sender = static_cast<int>(element >> 32);
+        receiver = static_cast<int>(element & ((1ULL << 32) - 1));
       } else if (counter % 2 == 1) {
         buffered_element = element;
       } else /*counter%2 == 0*/ {
@@ -205,7 +195,7 @@ struct WeightsSplitter {
       ++counter;
     }
     split_range.push_back(message_queue::MessageEnvelope{
-      .message = std::move(message), .sender = sender, .receiver = receiver, .tag = tag
+      .message = std::move(message), .sender = sender, .receiver = receiver, .tag = 0
     });
     return std::move(split_range);
   }
