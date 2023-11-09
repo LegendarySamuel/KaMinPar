@@ -19,6 +19,7 @@
 
 #undef V
 #include <message-queue/buffered_queue.hpp>
+#include <message-queue/indirection.hpp>
 #include <range/v3/all.hpp>
 
 #include <sparsehash/dense_hash_set>
@@ -301,6 +302,17 @@ public:
     _w_queue.local_threshold(_ctx.msg_q_context.weights_local_threshold);
   }
 
+  /**
+   * adding indirection functionality to the message queues
+  */
+  void add_indirection() {
+    // add indirection to label message queue
+    _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
+
+    // add indirection to weights message queue
+    _w_queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_w_queue)>{std::move(_w_queue)};
+  }
+
   // TODO async
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
@@ -317,6 +329,10 @@ public:
 
     // weights queue
     make_weights_message_queue();
+
+    if (_ctx.msg_q_context.indirection) {
+      add_indirection();
+    }
 
     SCOPED_TIMER("Compute label propagation clustering");
 

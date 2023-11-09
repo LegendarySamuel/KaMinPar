@@ -354,6 +354,7 @@ struct MessageQueueContext {
   std::size_t weights_local_threshold;
   std::size_t weights_handle_threshold;
   bool lock_then_retry;
+  bool indirection;
 };
 
 struct Context {

@@ -703,6 +703,9 @@ CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
   message_queue
       ->add_flag("--mq-lock-then-retry", ctx.msg_q_context.lock_then_retry, "Handle weights by the Lock-Then-Retry strategy.")
       ->capture_default_str();
+  message_queue
+      ->add_flag("--mq-indirection", ctx.msg_q_context.indirection, "Make use of indirection in the message queue communication process.")
+      ->capture_default_str();
 
   return message_queue;
 }

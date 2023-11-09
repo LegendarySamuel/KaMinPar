@@ -233,6 +233,7 @@ Context create_default_context() {
           .weights_local_threshold = 0,
           .weights_handle_threshold = 0,
           .lock_then_retry = true,
+          .indirection = true,
       }};
 }
 
