@@ -289,6 +289,8 @@ public:
     
     _queue.global_threshold(_ctx.msg_q_context.global_threshold);
     _queue.local_threshold(_ctx.msg_q_context.local_threshold);
+
+    _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
   }
 
   /**
@@ -300,6 +302,8 @@ public:
 
     _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
     _w_queue.local_threshold(_ctx.msg_q_context.weights_local_threshold);
+
+    _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
   }
 
   /**
