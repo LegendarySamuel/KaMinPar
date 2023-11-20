@@ -703,7 +703,7 @@ private:
     MPI_Comm_size((*_graph).communicator(), &pes);
     std::vector<int> num_messages(pes);
     for (NodeID u = from; u < to; ++u) {
-      int added_for_pe[pes] {0};
+      uint8_t added_for_pe[pes] {0};
       if (_changed_label[u] == kInvalidGlobalNodeID) {
         continue;
       }
@@ -729,7 +729,7 @@ private:
 
     // fill buffers
     for (NodeID u = from; u < to; ++u) {
-      int created_for_pe[pes] {0};
+      uint8_t created_for_pe[pes] {0};
       if (_changed_label[u] == kInvalidGlobalNodeID) {
         continue;
       }
