@@ -505,7 +505,8 @@ CLI::Option_group *create_coarsening_options(CLI::App *app, Context &ctx) {
   - ag-lp:          asynchronous global label propagation
   - lp2:            global label propagation with squential label update handling
   - ag-lp2:         asynchronous global label propagation with squential label update handling
-  - mq-lp:          asynchronous global label propagation using message queue)")
+  - mq-lp:          asynchronous global label propagation using message queue
+  - mlp:            global label propagation using message queue instead of sparsealltoall)")
 
       ->capture_default_str();
   coarsening->add_option(
