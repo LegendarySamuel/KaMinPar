@@ -18,3 +18,4 @@ build*/
 .idea/r*.xml
 .DS_Store
 .cache/
+*.txt
