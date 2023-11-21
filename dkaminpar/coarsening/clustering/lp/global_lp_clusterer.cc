@@ -119,6 +119,18 @@ public:
     STOP_TIMER();
   }
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _commStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _commEnd;
+  std::chrono::duration<double> _commDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _compStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _compEnd;
+  std::chrono::duration<double> _compDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
+  std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
+
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -141,6 +153,13 @@ public:
         break;
       }
     }
+
+    std::cout << "Time taken for communication() and handleLabels() operations: "
+              << _commDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for computation() operations: "
+              << _compDuration.count() << " seconds" << std::endl;
+    //std::cout << "Time taken for handleLabels() operations: "
+    //          << _handleLabelsDuration.count() << " seconds" << std::endl;
 
     return clusters();
   }
@@ -515,10 +534,14 @@ private:
   }
 
   GlobalNodeID process_chunk(const NodeID from, const NodeID to) {
+    _compStart = std::chrono::high_resolution_clock::now();
     START_TIMER("Chunk iteration");
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
     STOP_TIMER();
+    _compEnd = std::chrono::high_resolution_clock::now();
+    _compDuration += _compEnd - _compStart;
 
+    _commStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     const GlobalNodeID global_num_moved_nodes =
@@ -530,10 +553,16 @@ private:
     if (global_num_moved_nodes > 0) {
       synchronize_ghost_node_clusters(from, to);
     }
+    _commEnd = std::chrono::high_resolution_clock::now();
+    _commDuration += _commEnd - _commStart;
 
+
+    _compStart = std::chrono::high_resolution_clock::now();
     if (_c_ctx.global_lp.merge_singleton_clusters) {
       cluster_isolated_nodes(from, to);
     }
+    _compEnd = std::chrono::high_resolution_clock::now();
+    _compDuration += _compEnd - _compStart;
 
     return global_num_moved_nodes;
   }

@@ -120,6 +120,18 @@ public:
     STOP_TIMER();
   }
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _commStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _commEnd;
+  std::chrono::duration<double> _commDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _compStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _compEnd;
+  std::chrono::duration<double> _compDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
+  std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
+
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -186,6 +198,13 @@ public:
         break;
       }
     }
+
+    std::cout << "Time taken for communication() operations: "
+              << _commDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for computation() operations: "
+              << _compDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for handleLabels() operations: "
+              << _handleLabelsDuration.count() << " seconds" << std::endl;
 
     return clusters();
   }
@@ -560,6 +579,7 @@ private:
 
   // TODO calculation needs to evaluate buffer and calculate iteration
   NodeID process_chunk_computation(const NodeID from, const NodeID to) {
+    _compStart = std::chrono::high_resolution_clock::now();
     START_TIMER("Chunk computation");
 
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
@@ -569,6 +589,9 @@ private:
     if (_c_ctx.global_lp.merge_singleton_clusters) {
       cluster_isolated_nodes(from, to);
     }
+
+    _compEnd = std::chrono::high_resolution_clock::now();
+    _compDuration += _compEnd - _compStart;
 
     return local_num_moved_nodes;
   }
@@ -598,7 +621,7 @@ private:
   */
   template <typename Message>
   void communicate_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers) {
-
+    _commStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     // performing sparse all to all communication and writing into msgBuffer
@@ -614,6 +637,8 @@ private:
           msgBuffers[owner] = std::move(buffer);
         }
     );
+    _commEnd = std::chrono::high_resolution_clock::now();
+    _commDuration += _commEnd - _commStart;
 
   }
 
@@ -623,6 +648,7 @@ private:
   template <typename Message>
   GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
 
+    _handleLabelsStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     const GlobalNodeID global_num_moved_nodes =
@@ -681,6 +707,9 @@ private:
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
     
+    _handleLabelsEnd = std::chrono::high_resolution_clock::now();
+    _handleLabelsDuration += _handleLabelsEnd - _handleLabelsStart;
+
     return global_num_moved_nodes;
   }
 
