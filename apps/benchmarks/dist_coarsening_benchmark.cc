@@ -51,6 +51,7 @@ int main(int argc, char *argv[]) {
   app.add_option("-t", ctx.parallel.num_threads);
 
   create_coarsening_options(&app, ctx);
+  create_message_queue_options(&app, ctx);
   CLI11_PARSE(app, argc, argv);
 
   tbb::global_control gc(tbb::global_control::max_allowed_parallelism, ctx.parallel.num_threads);
