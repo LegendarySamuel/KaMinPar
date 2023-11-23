@@ -156,6 +156,8 @@ public:
     std::vector<NoinitVector<ChangedLabelMessage>> buffers(size);
 
     bool has_iterated = false;
+    
+    int loop_number = 0;
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       GlobalNodeID global_num_moved_nodes = 0;
@@ -168,6 +170,12 @@ public:
         // first chunk's computation
         local_num_moved_nodes = process_chunk_computation(from, to);
         has_iterated = true;
+
+        ++loop_number;
+        int rank = mpi::get_comm_rank(_graph->communicator());
+        std::stringstream phase;
+        phase << "Phase (rank, phase): (" << rank << ", " << loop_number << ")" << std::endl;
+        std::cout << phase.str();
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
@@ -176,6 +184,12 @@ public:
         communicate_labels(last_from, last_to, buffers);
         comp_thread.join();
         global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, buffers, size);
+
+        ++loop_number;
+        int rank = mpi::get_comm_rank(_graph->communicator());
+        std::stringstream phase;
+        phase << "Phase (rank, phase): (" << rank << ", " << loop_number << ")" << std::endl;
+        std::cout << phase.str();
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
@@ -184,14 +198,26 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        communicate_labels(prev_from, prev_to, buffers);
+        communicate_labels<ChangedLabelMessage>(prev_from, prev_to, buffers);
         comp_thread.join();
         global_num_moved_nodes += handle_labels(prev_from, prev_to, local_num_moved_nodes, buffers, size);
+
+        ++loop_number;
+        int rank = mpi::get_comm_rank(_graph->communicator());
+        std::stringstream phase;
+        phase << "Phase (rank, phase): (" << rank << ", " << loop_number << ")" << std::endl;
+        std::cout << phase.str();
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        communicate_labels(last_from, last_to, buffers);
+        communicate_labels<ChangedLabelMessage>(last_from, last_to, buffers);
         global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, buffers, size);
+
+        ++loop_number;
+        int rank = mpi::get_comm_rank(_graph->communicator());
+        std::stringstream phase;
+        phase << "Phase (rank, phase): (" << rank << ", " << loop_number << ")" << std::endl;
+        std::cout << phase.str();
       }
 
       if (global_num_moved_nodes == 0) {
@@ -331,6 +357,11 @@ public:
     KASSERT(lu < _changed_label.size());
     _changed_label[lu] = this->cluster(lu);
     NonatomicOwnedClusterVector::move_node(lu, gcluster);
+
+    int rank = mpi::get_comm_rank(_graph->communicator());
+    std::stringstream node_move;
+    node_move << "Node Move(rank, node_id, old_c, new_c): (" << rank << ", " << lu << ", " << _changed_label[lu] << ", " << gcluster << ")" << std::endl;
+    std::cout << node_move.str();
 
     // Detect if a node was moved back to its original cluster
     if (_c_ctx.global_lp.prevent_cyclic_moves && gcluster == initial_cluster(lu)) {
@@ -640,7 +671,7 @@ private:
     _commEnd = std::chrono::high_resolution_clock::now();
     _commDuration += _commEnd - _commStart;
 
-  }
+      }
 
   /**
    * *process labels received in the previous iteration

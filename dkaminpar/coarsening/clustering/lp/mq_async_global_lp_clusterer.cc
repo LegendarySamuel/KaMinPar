@@ -317,6 +317,38 @@ public:
     _w_queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_w_queue)>{std::move(_w_queue)};
   }
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _mqSetupStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _mqSetupEnd;
+  std::chrono::duration<double> _mqSetupDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _iterateNodeStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _iterateNodeEnd;
+  std::chrono::duration<double> _iterateNodeDuration = std::chrono::duration<double>::zero();
+  
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
+  std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleWeightsStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleWeightsEnd;
+  std::chrono::duration<double> _handleWeightsDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _allreduceStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _allreduceEnd;
+  std::chrono::duration<double> _allreduceDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _clIsolatedStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _clIsolatedEnd;
+  std::chrono::duration<double> _clIsolatedDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _fixOverweightStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _fixOverweightEnd;
+  std::chrono::duration<double> _fixOverweightDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _resetAndCleanupStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _resetAndCleanupEnd;
+  std::chrono::duration<double> _resetAndCleanupDuration = std::chrono::duration<double>::zero();
+
   // TODO async
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
@@ -326,6 +358,7 @@ public:
 
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
 
+    _mqSetupStart = std::chrono::high_resolution_clock::now();
     MPI_Comm_dup(graph.communicator(), &_w_comm);
 
     // label queue
@@ -337,6 +370,8 @@ public:
     if (_ctx.msg_q_context.indirection) {
       add_indirection();
     }
+    _mqSetupEnd = std::chrono::high_resolution_clock::now();
+    _mqSetupDuration += _mqSetupEnd - _mqSetupStart;
 
     SCOPED_TIMER("Compute label propagation clustering");
 
@@ -350,10 +385,14 @@ public:
       std::size_t label_msg_counter = 0;
       std::size_t weights_msg_counter = 0;
       for (NodeID u = 0; u < graph.n(); ++u) {
+        _iterateNodeStart = std::chrono::high_resolution_clock::now();
         local_num_moved_nodes += process_node(u);
+        _iterateNodeEnd = std::chrono::high_resolution_clock::now();
+        _iterateNodeDuration += _iterateNodeEnd - _iterateNodeStart;
 
         // TODO
         // seprarate weights and message handling times
+        _handleWeightsStart = std::chrono::high_resolution_clock::now();
         if (weights_msg_counter < _ctx.msg_q_context.weights_handle_threshold) {
           ++weights_msg_counter;
         } else {
@@ -365,7 +404,10 @@ public:
           // handle received messages
           handle_weights_messages(*(_graph));
         }
+        _handleWeightsEnd = std::chrono::high_resolution_clock::now();
+        _handleWeightsDuration += _handleWeightsEnd - _handleWeightsStart;
         
+        _handleLabelsStart = std::chrono::high_resolution_clock::now();
         // if should handle messages now: handle messages
         if (label_msg_counter < _ctx.msg_q_context.message_handle_threshold) {
           ++label_msg_counter;
@@ -376,48 +418,86 @@ public:
           // handle received label messages
           handle_messages();
         }
+        _handleLabelsEnd = std::chrono::high_resolution_clock::now();
+        _handleLabelsDuration += _handleLabelsEnd - _handleLabelsStart;
       }
 
       mpi::barrier(_graph->communicator());
 
+      _allreduceStart = std::chrono::high_resolution_clock::now();
       const GlobalNodeID global_num_moved_nodes = 
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
+      _allreduceEnd = std::chrono::high_resolution_clock::now();
+      _allreduceDuration += _allreduceEnd - _allreduceStart;
 
+      _clIsolatedStart = std::chrono::high_resolution_clock::now();
       if (_c_ctx.global_lp.merge_singleton_clusters) {
         cluster_isolated_nodes(0, graph.n());
       }
+      _clIsolatedEnd = std::chrono::high_resolution_clock::now();
+      _clIsolatedDuration += _clIsolatedEnd - _clIsolatedStart;
 
       // if nothing changed during the iteration, end clustering
       if (global_num_moved_nodes == 0) {
         break;
       }
+      _resetAndCleanupStart = std::chrono::high_resolution_clock::now();
       // terminate and reactivate queue
       handle_cluster_weights(graph.n() - 1);
       terminate_queue();
       terminate_weights_queue(graph);
       _w_queue.reactivate();
       _queue.reactivate();
+      _resetAndCleanupEnd = std::chrono::high_resolution_clock::now();
+      _resetAndCleanupDuration += _resetAndCleanupEnd - _resetAndCleanupStart;
 
+      _fixOverweightStart = std::chrono::high_resolution_clock::now();
       // cleanup: handle overweight clusters
       if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry && _violation) {
         fix_overweight_clusters(graph);
         _violation = false;
       }
+      _fixOverweightEnd = std::chrono::high_resolution_clock::now();
+      _fixOverweightDuration += _fixOverweightEnd - _fixOverweightStart;
 
+      _resetAndCleanupStart = std::chrono::high_resolution_clock::now();
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
 
       // clear the hashmap for the next iteration
       _unowned_clusters_local_weight.clear_no_resize();
+      _resetAndCleanupEnd = std::chrono::high_resolution_clock::now();
+      _resetAndCleanupDuration += _resetAndCleanupEnd - _resetAndCleanupStart;
     }
     
+    _resetAndCleanupStart = std::chrono::high_resolution_clock::now();
     // terminate queues
     terminate_queue();
     terminate_weights_queue(graph);
 
     // free unused communicator
     MPI_Comm_free(&_w_comm);
+
+    _resetAndCleanupEnd = std::chrono::high_resolution_clock::now();
+    _resetAndCleanupDuration += _resetAndCleanupEnd - _resetAndCleanupStart;
+
+    std::cout << "Time taken for MQSetup() operations: "
+              << _mqSetupDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for iterateNode() operations: "
+              << _iterateNodeDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for handleLabels() operations: "
+              << _handleLabelsDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for handleWeights() operations: "
+              << _handleWeightsDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for allreduce() operations: "
+              << _allreduceDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for clusterIsolatedNodes() operations: "
+              << _clIsolatedDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for fixOverweightClusters() operations: "
+              << _fixOverweightDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for reset() and Cleanup() operations: "
+              << _resetAndCleanupDuration.count() << " seconds" << std::endl;
 
     return clusters();
   }
