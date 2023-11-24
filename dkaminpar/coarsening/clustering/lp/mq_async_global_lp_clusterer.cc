@@ -318,22 +318,6 @@ public:
   }
 
   /**
-   * Compute the label MQ buffer dynamically size
-  */
-  std::pair<size_t, size_t> compute_label_MQ_buffer_size() {
-    int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
-    size_t l_threshold;
-    NodeID num_nodes = _graph->n();
-    if (num_nodes % num_chunks == 0) {
-      l_threshold = num_nodes / num_chunks;
-    } else {
-      l_threshold = (num_nodes / num_chunks) + 1;
-    }
-    size_t g_threshold = mpi::get_comm_size(_graph->communicator()) * l_threshold;
-    return std::make_pair(l_threshold, g_threshold);
-  }
-
-  /**
    *  Weights Message Queue sending WeightsMessage (cluster, weight_delta)
   */
   void make_weights_message_queue() {
