@@ -349,6 +349,7 @@ struct DebugContext {
 struct MessageQueueContext {
   std::size_t global_threshold;
   std::size_t local_threshold;
+  bool dynamic_threshold;
   std::size_t message_handle_threshold;
   std::size_t weights_global_threshold;
   std::size_t weights_local_threshold;

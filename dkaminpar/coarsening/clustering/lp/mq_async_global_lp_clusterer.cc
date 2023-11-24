@@ -287,10 +287,50 @@ public:
     // message queue
     _queue = message_queue::make_buffered_queue<LabelMessage, uint64_t>(graph.communicator(), LabelMerger{}, LabelSplitter{});
     
-    _queue.global_threshold(_ctx.msg_q_context.global_threshold);
-    _queue.local_threshold(_ctx.msg_q_context.local_threshold);
+    // dynamically calculated threshold sizes (similar to chunksize)
+    // now half of original value
+    if (_ctx.msg_q_context.dynamic_threshold) {
+      auto [l_threshold, g_threshold] = compute_label_MQ_buffer_size();
+      _queue.global_threshold(g_threshold / 2);
+      _queue.local_threshold(l_threshold / 2);
+    } else {
+      _queue.global_threshold(_ctx.msg_q_context.global_threshold);
+      _queue.local_threshold(_ctx.msg_q_context.local_threshold);
+    }
 
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
+  }
+
+  /**
+   * Compute the label MQ buffer size dynamically
+  */
+  std::pair<size_t, size_t> compute_label_MQ_buffer_size() {
+    int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
+    size_t l_threshold;
+    NodeID num_nodes = _graph->n();
+    if (num_nodes % num_chunks == 0) {
+      l_threshold = num_nodes / num_chunks;
+    } else {
+      l_threshold = (num_nodes / num_chunks) + 1;
+    }
+    size_t g_threshold = mpi::get_comm_size(_graph->communicator()) * l_threshold;
+    return std::make_pair(l_threshold, g_threshold);
+  }
+
+  /**
+   * Compute the label MQ buffer dynamically size
+  */
+  std::pair<size_t, size_t> compute_label_MQ_buffer_size() {
+    int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
+    size_t l_threshold;
+    NodeID num_nodes = _graph->n();
+    if (num_nodes % num_chunks == 0) {
+      l_threshold = num_nodes / num_chunks;
+    } else {
+      l_threshold = (num_nodes / num_chunks) + 1;
+    }
+    size_t g_threshold = mpi::get_comm_size(_graph->communicator()) * l_threshold;
+    return std::make_pair(l_threshold, g_threshold);
   }
 
   /**
