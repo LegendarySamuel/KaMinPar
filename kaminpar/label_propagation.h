@@ -698,6 +698,104 @@ protected:
 };
 
 /*!
+ * Generic implementation of parallel label propagation. To use, inherit from
+ * this class and implement all mandatory template functions.
+ *
+ * @tparam Derived Derived class for static polymorphism.
+ * @tparam Config Algorithmic configuration and data types.
+ */
+template <typename Derived, typename Config> class MQLabelPropagationBase : public LabelPropagation<Derived, Config> {
+
+protected:
+  using MQBase = LabelPropagation<Derived, Config>;
+  using Graph = typename MQBase::Graph;
+  using ClusterID = typename MQBase::ClusterID;
+
+  [[nodiscard]] bool derived_is_cluster_locked(const Graph &graph, ClusterID cluster) {
+    return static_cast<Derived *>(this)->is_cluster_locked(graph, cluster);
+  }
+};
+
+/*!
+ * Label propagation template that has to be manually called in order to 
+ * iterate over single nodes.
+ * @tparam Derived Derived subclass for static polymorphism.
+ * @tparam Config Algorithmic configuration and data types.
+ */
+template <typename Derived, typename Config>
+class MQLabelPropagation : public MQLabelPropagationBase<Derived, Config> {
+  static_assert(std::is_base_of_v<LabelPropagationConfig, Config>);
+  SET_DEBUG(true);
+
+protected:
+  using Base = MQLabelPropagationBase<Derived, Config>;
+  using OriginalBase = Base::MQBase;
+
+  using Graph = typename OriginalBase::Graph;
+  using ClusterID = typename OriginalBase::ClusterID;
+  using ClusterWeight = typename OriginalBase::ClusterWeight;
+  using EdgeID = typename OriginalBase::EdgeID;
+  using EdgeWeight = typename OriginalBase::EdgeWeight;
+  using NodeID = typename OriginalBase::NodeID;
+  using NodeWeight = typename OriginalBase::NodeWeight;
+
+  using OriginalBase::handle_node;
+  using OriginalBase::set_max_degree;
+  using OriginalBase::set_max_num_neighbors;
+  using OriginalBase::should_stop;
+
+  // TODO iteration for single node
+  NodeID
+  perform_iteration_for_node(const NodeID u) {
+    tbb::enumerable_thread_specific<NodeID> num_moved_nodes_ets;
+
+    EdgeID work_since_update = 0;
+    NodeID num_removed_clusters = 0;
+
+    auto &num_moved_nodes = num_moved_nodes_ets.local();
+    auto &rand = Random::instance();
+    auto &rating_map = _rating_map_ets.local();
+
+    if (_graph->degree(u) > _max_degree) {
+      return 0;
+    }
+
+    if constexpr (Config::kUseActiveSetStrategy || Config::kUseLocalActiveSetStrategy) {
+      if (!_active[u].load(std::memory_order_relaxed)) {
+        return 0;
+      }
+    }
+
+    if (work_since_update > Config::kMinChunkSize) {
+      if (OriginalBase::should_stop()) {
+        return 0;
+      }
+
+      _current_num_clusters -= num_removed_clusters;
+      work_since_update = 0;
+      num_removed_clusters = 0;
+    }
+
+    const auto [moved_node, emptied_cluster] = handle_node(u, rand, rating_map);
+    work_since_update += _graph->degree(u);
+    if (moved_node) {
+      ++num_moved_nodes;
+    }
+    if (emptied_cluster) {
+      ++num_removed_clusters;
+    }
+
+    return num_moved_nodes_ets.combine(std::plus{});
+  }
+
+  using OriginalBase::_active;
+  using OriginalBase::_current_num_clusters;
+  using OriginalBase::_graph;
+  using OriginalBase::_max_degree;
+  using OriginalBase::_rating_map_ets;
+};
+
+/*!
  * Parallel label propagation template that iterates over nodes in chunk random
  * order.
  * @tparam Derived Derived subclass for static polymorphism.
@@ -808,50 +906,6 @@ protected:
 
       _current_num_clusters -= num_removed_clusters;
     });
-
-    return num_moved_nodes_ets.combine(std::plus{});
-  }
-  
-  // TODO iteration for single node
-  NodeID
-  perform_iteration_for_node(const NodeID u) {
-    tbb::enumerable_thread_specific<NodeID> num_moved_nodes_ets;
-
-    EdgeID work_since_update = 0;
-    NodeID num_removed_clusters = 0;
-
-    auto &num_moved_nodes = num_moved_nodes_ets.local();
-    auto &rand = Random::instance();
-    auto &rating_map = _rating_map_ets.local();
-
-    if (_graph->degree(u) > _max_degree) {
-      return 0;
-    }
-
-    if constexpr (Config::kUseActiveSetStrategy || Config::kUseLocalActiveSetStrategy) {
-      if (!_active[u].load(std::memory_order_relaxed)) {
-        return 0;
-      }
-    }
-
-    if (work_since_update > Config::kMinChunkSize) {
-      if (Base::should_stop()) {
-        return 0;
-      }
-
-      _current_num_clusters -= num_removed_clusters;
-      work_since_update = 0;
-      num_removed_clusters = 0;
-    }
-
-    const auto [moved_node, emptied_cluster] = handle_node(u, rand, rating_map);
-    work_since_update += _graph->degree(u);
-    if (moved_node) {
-      ++num_moved_nodes;
-    }
-    if (emptied_cluster) {
-      ++num_removed_clusters;
-    }
 
     return num_moved_nodes_ets.combine(std::plus{});
   }
