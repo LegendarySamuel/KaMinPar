@@ -10,6 +10,7 @@
 #include "tests/dkaminpar/distributed_graph_helpers.h"
 
 #include "dkaminpar/coarsening/contraction/cluster_contraction.h"
+#include "dkaminpar/coarsening/contraction/cluster_contraction.cc"
 #include "dkaminpar/mpi/utils.h"
 
 namespace kaminpar::dist {
@@ -25,7 +26,8 @@ StaticArray<GlobalNodeID> build_cnode_distribution(const GlobalNodeID n) {
 TEST(ClusterReassignmentTest, perfectly_balanced_case) {
   const auto graph = make_isolated_nodes_graph(4);
   const auto cnode_distribution = build_cnode_distribution(2);
-  const auto result = compute_assignment_shifts(graph, cnode_distribution, 1.0);
+  const auto result =
+      compute_assignment_shifts(graph.node_distribution(), cnode_distribution, 1.0);
   EXPECT_THAT(result.overload, Each(Eq(0)));
   EXPECT_THAT(result.underload, Each(Eq(0)));
 }
@@ -36,7 +38,8 @@ TEST(ClusterReassignmentTest, stair_no_limit) {
 
   const auto graph = make_isolated_nodes_graph(size * size);
   const auto cnode_distribution = build_cnode_distribution(2 * (rank + 1));
-  const auto result = compute_assignment_shifts(graph, cnode_distribution, 1.0);
+  const auto result =
+      compute_assignment_shifts(graph.node_distribution(), cnode_distribution, 1.0);
 
   const GlobalNodeID expected = size + 1;
 
@@ -265,6 +268,19 @@ TEST(ClusterContractionTest, rotate_global_complete_graph) {
     EXPECT_EQ(c_graph.m(), graph.m());
     EXPECT_EQ(c_graph.node_weights(), graph.node_weights());
     EXPECT_EQ(c_graph.edge_weights(), graph.edge_weights());
+  }
+}
+
+TEST(ClusterReassignmentTest, rgg2d_N7_M11_2pe_regression) {
+  const auto node_distribution = static_array::create_from<GlobalNodeID>({0, 57, 128});
+  const auto cnode_distribution = static_array::create_from<GlobalNodeID>({0, 57, 128});
+  const double max_cnode_imbalance = 1.1;
+
+  const auto shifts = compute_assignment_shifts(node_distribution, cnode_distribution, 1.1);
+
+  for (PEID pe = 0; pe < 2; ++pe) {
+    const GlobalNodeID my_underload = shifts.underload[pe + 1] - shifts.underload[pe];
+    EXPECT_EQ(my_underload, 0);
   }
 }
 } // namespace kaminpar::dist
