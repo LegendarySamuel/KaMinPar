@@ -216,8 +216,10 @@ public:
       }
 
       if (global_num_moved_nodes == 0) {
+        std::cout << "No changes, break." << std::endl;
         break;
       }
+      std::cout << "Single Iteration done." << std::endl;
     }
 
     std::cout << "Time taken for communication() operations: "
