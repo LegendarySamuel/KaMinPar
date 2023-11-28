@@ -165,11 +165,12 @@ public:
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
 
-      NodeID local_num_moved_nodes = 0;
+      std::atomic<NodeID> local_num_moved_nodes = 0;
+      NodeID prev_num_moved_nodes = 0;
 
       if (!has_iterated) {
         // first chunk's computation
-        local_num_moved_nodes = process_chunk_computation(from, to);
+        prev_num_moved_nodes = process_chunk_computation(from, to);
         has_iterated = true;
 
         ++loop_number;
@@ -181,7 +182,8 @@ public:
         // previous iteration's last chunk's communication and first chunk computation of current iteration
         local_num_moved_nodes = process_chunk_computation(from, to);
         communicate_labels(last_from, last_to, buffers);
-        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
+        prev_num_moved_nodes = local_num_moved_nodes;
 
         ++loop_number;
         int rank = mpi::get_comm_rank(_graph->communicator());
@@ -195,7 +197,8 @@ public:
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
         local_num_moved_nodes = process_chunk_computation(from, to);
         communicate_labels(prev_from, prev_to, buffers);
-        global_num_moved_nodes += handle_labels(prev_from, prev_to, local_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += handle_labels(prev_from, prev_to, prev_num_moved_nodes, buffers, size);
+        prev_num_moved_nodes = local_num_moved_nodes;
 
         ++loop_number;
         int rank = mpi::get_comm_rank(_graph->communicator());
@@ -206,7 +209,7 @@ public:
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
         communicate_labels(last_from, last_to, buffers);
-        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
 
         ++loop_number;
         int rank = mpi::get_comm_rank(_graph->communicator());
@@ -216,8 +219,10 @@ public:
       }
 
       if (global_num_moved_nodes == 0) {
+        std::cout << "No changes, break." << std::endl;
         break;
       }
+      std::cout << "Single Iteration done." << std::endl;
     }
 
     std::cout << "Time taken for communication() operations: "
@@ -704,7 +709,6 @@ private:
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
         auto &weight_delta_handle = _weight_delta_handles_ets.local();
 
-        Message message;
         // iterate for each interface node, that has received an update
         for (std::size_t j = r.begin(); j != r.end(); ++j) {
           const auto [owner_lnode, new_gcluster] = buffer[j];
