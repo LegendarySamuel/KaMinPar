@@ -151,17 +151,19 @@ public:
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
 
-      NodeID local_num_moved_nodes = 0;
+      std::atomic<NodeID> local_num_moved_nodes = 0;
+      NodeID prev_num_moved_nodes = 0;
 
       if (!has_iterated) {
         // first chunk's computation
-        local_num_moved_nodes = process_chunk_computation(from, to);
+        prev_num_moved_nodes = process_chunk_computation(from, to);
         has_iterated = true;
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
         local_num_moved_nodes = process_chunk_computation(from, to);
         communicate_labels(last_from, last_to, buffers);
-        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
+        prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
@@ -169,12 +171,13 @@ public:
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
         local_num_moved_nodes = process_chunk_computation(from, to);
         communicate_labels(prev_from, prev_to, buffers);
-        global_num_moved_nodes += handle_labels(prev_from, prev_to, local_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += handle_labels(prev_from, prev_to, prev_num_moved_nodes, buffers, size);
+        prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
         communicate_labels(last_from, last_to, buffers);
-        global_num_moved_nodes += handle_labels(last_from, last_to, local_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
       }
 
       if (global_num_moved_nodes == 0) {
