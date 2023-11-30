@@ -144,6 +144,7 @@ public:
     std::vector<NoinitVector<ChangedLabelMessage>> buffers(size);
 
     bool has_iterated = false;
+    NodeID prev_num_moved_nodes = 0;
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       GlobalNodeID global_num_moved_nodes = 0;
@@ -151,7 +152,6 @@ public:
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
 
       std::atomic<NodeID> local_num_moved_nodes = 0;
-      NodeID prev_num_moved_nodes = 0;
 
       if (!has_iterated) {
         // first chunk's computation

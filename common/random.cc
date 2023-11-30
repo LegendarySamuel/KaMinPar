@@ -9,7 +9,7 @@
 
 namespace kaminpar {
 Random &Random::instance() {
-  thread_local static Random instance;
+  /*thread_local*/ static Random instance;
   return instance;
 }
 
