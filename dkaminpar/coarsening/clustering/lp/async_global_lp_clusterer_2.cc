@@ -128,6 +128,10 @@ public:
   std::chrono::time_point<std::chrono::high_resolution_clock> _compEnd;
   std::chrono::duration<double> _compDuration = std::chrono::duration<double>::zero();
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _combStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _combEnd;
+  std::chrono::duration<double> _combDuration = std::chrono::duration<double>::zero();
+
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsStart;
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
   std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
@@ -159,20 +163,20 @@ public:
 
     int rank = mpi::get_comm_rank(_graph->communicator());
 
-    if (rank == 0) {
+    /*if (rank == 0) {
     std::cout << "Print constants: " << std::endl;
     std::cout << "Max Num Iterations = " << _max_num_iterations << std::endl;
     std::cout << "Num Chunks = " << num_chunks << std::endl; 
     std::cout << "Number of Nodes = " << _graph->n() << std::endl;
-    }
+    }*/
 
     NodeID prev_num_moved_nodes = 0;
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       if (rank == 0) {
-      std::cout << "Print values: " << std::endl;
+      //std::cout << "Print values: " << std::endl;
       std::cout << "Current Iteration = " << iteration << std::endl;
-      std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
+      //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
       }
 
       GlobalNodeID global_num_moved_nodes = 0;
@@ -183,15 +187,21 @@ public:
 
       if (!has_iterated) {
         // first chunk's computation
+        _combStart = std::chrono::high_resolution_clock::now();
         prev_num_moved_nodes = process_chunk_computation(from, to);
+        _combEnd = std::chrono::high_resolution_clock::now();
+        _combDuration += _combEnd - _combStart;
         has_iterated = true;
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
+        _combStart = std::chrono::high_resolution_clock::now();
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
+        _combEnd = std::chrono::high_resolution_clock::now();
+        _combDuration += _combEnd - _combStart;
         handle_labels(last_from, last_to, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
@@ -199,21 +209,28 @@ public:
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
+        _combStart = std::chrono::high_resolution_clock::now();
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
         global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
+        _combEnd = std::chrono::high_resolution_clock::now();
+        _combDuration += _combEnd - _combStart;
         handle_labels(prev_from, prev_to, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
+        _combStart = std::chrono::high_resolution_clock::now();
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
+        _combEnd = std::chrono::high_resolution_clock::now();
+        _combDuration += _combEnd - _combStart;
         handle_labels(last_from, last_to, buffers, size);
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
+        std::cout << "No changes, break." << std::endl;
         break;
       }
     }
@@ -222,12 +239,14 @@ public:
               << _commDuration.count() << " seconds" << std::endl;
     std::cout << "Time taken for computation() operations: "
               << _compDuration.count() << " seconds" << std::endl;
+    std::cout << "Actual time passed during comm() and comp() operations: "
+              << _combDuration.count() << " seconds" << std::endl;
     std::cout << "Time taken for handleLabels() operations: "
               << _handleLabelsDuration.count() << " seconds" << std::endl;
 
-    std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
+    /*std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
     std::cout << "Total number of labels received (rank, #Labels): " << rank << ", " << _total_received_labels << std::endl;
-    std::cout << "Total number of labels handled (rank, #Labels): " << rank << ", " << _total_handled_labels << std::endl;
+    std::cout << "Total number of labels handled (rank, #Labels): " << rank << ", " << _total_handled_labels << std::endl;*/
 
     return clusters();
   }

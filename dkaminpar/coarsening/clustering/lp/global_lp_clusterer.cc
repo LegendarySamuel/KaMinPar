@@ -143,12 +143,21 @@ public:
 
     const int num_chunks = _c_ctx.global_lp.compute_num_chunks(_ctx.parallel);
 
+    int rank = mpi::get_comm_rank(_graph->communicator());
+
+    /*if (rank == 0) {
     std::cout << "Print constants: " << std::endl;
     std::cout << "Max Num Iterations = " << _max_num_iterations << std::endl;
     std::cout << "Num Chunks = " << num_chunks << std::endl; 
     std::cout << "Number of Nodes = " << _graph->n() << std::endl;
+    }*/
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
+      if (rank == 0) {
+      //std::cout << "Print values: " << std::endl;
+      std::cout << "Current Iteration = " << iteration << std::endl;
+      //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
+      }
       GlobalNodeID global_num_moved_nodes = 0;
       for (int chunk = 0; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);

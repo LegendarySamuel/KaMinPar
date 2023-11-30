@@ -160,13 +160,20 @@ public:
 
     int rank = mpi::get_comm_rank(_graph->communicator());
     
+    /*if (rank == 0) {
+    std::cout << "Print constants: " << std::endl;
+    std::cout << "Max Num Iterations = " << _max_num_iterations << std::endl;
+    std::cout << "Num Chunks = " << num_chunks << std::endl; 
+    std::cout << "Number of Nodes = " << _graph->n() << std::endl;
+    }*/
+
     NodeID prev_num_moved_nodes = 0;
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       if (rank == 0) {
-      std::cout << "Print values: " << std::endl;
+      //std::cout << "Print values: " << std::endl;
       std::cout << "Current Iteration = " << iteration << std::endl;
-      std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
+      //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
       }
       
       GlobalNodeID global_num_moved_nodes = 0;
@@ -205,7 +212,6 @@ public:
         std::cout << "No changes, break." << std::endl;
         break;
       }
-      std::cout << "Single Iteration done." << std::endl;
     }
 
     std::cout << "Time taken for communication() operations: "
@@ -215,9 +221,9 @@ public:
     std::cout << "Time taken for handleLabels() operations: "
               << _handleLabelsDuration.count() << " seconds" << std::endl;
 
-    std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
+    /*std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
     std::cout << "Total number of labels received (rank, #Labels): " << rank << ", " << _total_received_labels << std::endl;
-    std::cout << "Total number of labels handled (rank, #Labels): " << rank << ", " << _total_handled_labels << std::endl;
+    std::cout << "Total number of labels handled (rank, #Labels): " << rank << ", " << _total_handled_labels << std::endl;*/
 
     return clusters();
   }
