@@ -162,9 +162,9 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        communicate_labels(last_from, last_to, buffers);
+        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
-        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
+        handle_labels(last_from, last_to, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
@@ -174,18 +174,18 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        communicate_labels(prev_from, prev_to, buffers);
+        global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
-        global_num_moved_nodes += handle_labels(prev_from, prev_to, prev_num_moved_nodes, buffers, size);
+        handle_labels(prev_from, prev_to, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        communicate_labels(last_from, last_to, buffers);
-        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
+        handle_labels(last_from, last_to, buffers, size);
       }
 
-      if (global_num_moved_nodes == 0) {
+      if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
         break;
       }
     }
@@ -562,7 +562,7 @@ private:
     STOP_TIMER();
   }
 
-  // TODO calculation needs to evaluate buffer and calculate iteration
+  // compute labels
   NodeID process_chunk_computation(const NodeID from, const NodeID to) {
     START_TIMER("Chunk computation");
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
@@ -575,30 +575,20 @@ private:
     return local_num_moved_nodes;
   }
 
-  // TODO communication, write into buffer
-  GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
-    
-    START_TIMER("Chunk communication");
+  /**
+   * communicate the labels of the previous iteration
+  */
+  template <typename Message>
+  GlobalNodeID communicate_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers) {
+
     mpi::barrier(_graph->communicator());
+
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
     
-    control_cluster_weights(from, to);
-
-    if (global_num_moved_nodes > 0) {
-      synchronize_ghost_node_clusters(from, to);
+    if (global_num_moved_nodes <= 0) {
+      return global_num_moved_nodes;
     }
-
-    STOP_TIMER();
-
-    return global_num_moved_nodes;
-  }
-
-  /**
-   * *communicate the labels of the current iteration
-  */
-  template <typename Message>
-  void communicate_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers) {
 
     mpi::barrier(_graph->communicator());
 
@@ -615,25 +605,16 @@ private:
           msgBuffers[owner] = std::move(buffer);
         }
     );
-
+    return global_num_moved_nodes;
   }
 
   /**
-   * *process labels received in the previous iteration
+   * process labels received in the previous iteration
   */
   template <typename Message>
-  GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
-
-    mpi::barrier(_graph->communicator());
-
-    const GlobalNodeID global_num_moved_nodes =
-        mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
+  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
 
     control_cluster_weights(from, to);
-
-    if (global_num_moved_nodes <= 0) {
-      return global_num_moved_nodes;
-    }
 
     // handling messages
     for (int i = 0; i < size; ++i) {
@@ -677,70 +658,6 @@ private:
         }
       });
     }
-
-    _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
-      _changed_label[lnode] = kInvalidGlobalNodeID;
-    });
-    
-    return global_num_moved_nodes;
-  }
-
-    // TODO send _changed_label asynchronously
-  void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
-
-    SCOPED_TIMER("Synchronize ghost node clusters");
-
-    struct ChangedLabelMessage {
-      NodeID owner_lnode;
-      ClusterID new_gcluster;
-    };
-
-mpi::barrier(_graph->communicator());
-    // performing sparse all to all communication and handling messages
-    mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
-        *_graph,
-        from,
-        to,
-        [&](const NodeID lnode) { return _changed_label[lnode] != kInvalidGlobalNodeID; },
-        [&](const NodeID lnode) -> ChangedLabelMessage {
-          return {lnode, cluster(lnode)};
-        },
-        [&](const auto &buffer, const PEID owner) {
-          tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
-            auto &weight_delta_handle = _weight_delta_handles_ets.local();
-
-            // iterate for each interface node, that has received an update
-            for (std::size_t i = r.begin(); i != r.end(); ++i) {
-              const auto [owner_lnode, new_gcluster] = buffer[i];
-
-              const GlobalNodeID gnode = _graph->offset_n(owner) + owner_lnode;
-              KASSERT(!_graph->is_owned_global_node(gnode));
-
-              const NodeID lnode = _graph->global_to_local_node(gnode);
-              
-              const NodeWeight weight = _graph->node_weight(lnode);
-
-              const GlobalNodeID old_gcluster = cluster(lnode);
-
-              // If we synchronize the weights of clusters with local
-              // changes, we already have the right weight including ghost
-              // vertices --> only update weight if we did not get an update
-
-              if (!should_sync_cluster_weights() ||
-                  weight_delta_handle.find(old_gcluster + 1) == weight_delta_handle.end()) {
-                change_cluster_weight(old_gcluster, -weight, true);
-              }
-
-              // move node to the newly assigned cluster
-              NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
-              if (!should_sync_cluster_weights() ||
-                  weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
-                change_cluster_weight(new_gcluster, weight, false);
-              }
-            }
-          });
-        }
-    );
 
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
