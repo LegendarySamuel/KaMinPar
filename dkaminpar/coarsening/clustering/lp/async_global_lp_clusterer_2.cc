@@ -190,9 +190,9 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        communicate_labels(last_from, last_to, buffers);
+        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
-        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
+        handle_labels(last_from, last_to, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
@@ -202,15 +202,15 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        communicate_labels(prev_from, prev_to, buffers);
+        global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
-        global_num_moved_nodes += handle_labels(prev_from, prev_to, prev_num_moved_nodes, buffers, size);
+        handle_labels(prev_from, prev_to, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        communicate_labels(last_from, last_to, buffers);
-        global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
+        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
+        handle_labels(last_from, last_to, buffers, size);
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
@@ -659,8 +659,18 @@ private:
    * *communicate the labels of the current iteration
   */
   template <typename Message>
-  void communicate_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers) {
+  GlobalNodeID communicate_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers) {
     _commStart = std::chrono::high_resolution_clock::now();
+    
+    mpi::barrier(_graph->communicator());
+
+    const GlobalNodeID global_num_moved_nodes =
+        mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
+      
+    if (global_num_moved_nodes <= 0) {
+      return global_num_moved_nodes;
+    }
+
     mpi::barrier(_graph->communicator());
 
     // performing sparse all to all communication and writing into msgBuffer
@@ -682,7 +692,7 @@ private:
 
     _commEnd = std::chrono::high_resolution_clock::now();
     _commDuration += _commEnd - _commStart;
-
+    return global_num_moved_nodes;
   }
 
   int _total_handled_labels = 0;
@@ -691,18 +701,10 @@ private:
    * *process labels received in the previous iteration
   */
   template <typename Message>
-  GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
+  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
     _handleLabelsStart = std::chrono::high_resolution_clock::now();
-    mpi::barrier(_graph->communicator());
-
-    const GlobalNodeID global_num_moved_nodes =
-        mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
 
     control_cluster_weights(from, to);
-
-    if (global_num_moved_nodes <= 0) {
-      return global_num_moved_nodes;
-    }
 
     // handling messages
     for (int i = 0; i < size; ++i) {
@@ -753,8 +755,6 @@ private:
     
     _handleLabelsEnd = std::chrono::high_resolution_clock::now();
     _handleLabelsDuration += _handleLabelsEnd - _handleLabelsStart;
-
-    return global_num_moved_nodes;
   }
 
     // TODO send _changed_label asynchronously
