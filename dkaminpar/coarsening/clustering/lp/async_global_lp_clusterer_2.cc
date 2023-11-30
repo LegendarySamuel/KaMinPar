@@ -156,8 +156,7 @@ public:
     std::vector<NoinitVector<ChangedLabelMessage>> buffers(size);
 
     bool has_iterated = false;
-    
-    int loop_number = 0;
+
     int rank = mpi::get_comm_rank(_graph->communicator());
 
     if (rank == 0) {
@@ -173,7 +172,6 @@ public:
       std::cout << "Current Iteration = " << iteration << std::endl;
       std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
       }
-      int number_intra_iteration_steps = 0;
 
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
@@ -203,18 +201,18 @@ public:
         std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
                                   local_num_moved_nodes = process_chunk_computation(from, to);
                                 });
-        communicate_labels<ChangedLabelMessage>(prev_from, prev_to, buffers);
+        communicate_labels(prev_from, prev_to, buffers);
         comp_thread.join();
         global_num_moved_nodes += handle_labels(prev_from, prev_to, prev_num_moved_nodes, buffers, size);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        communicate_labels<ChangedLabelMessage>(last_from, last_to, buffers);
+        communicate_labels(last_from, last_to, buffers);
         global_num_moved_nodes += handle_labels(last_from, last_to, prev_num_moved_nodes, buffers, size);
       }
 
-      if (global_num_moved_nodes == 0) {
+      if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
         break;
       }
     }
@@ -674,6 +672,9 @@ private:
           return {lnode, cluster(lnode)};
         },
         [&](auto &&buffer, const PEID owner) {
+
+          _total_received_labels += buffer.size();
+
           msgBuffers[owner] = std::move(buffer);
         }
     );
@@ -690,7 +691,6 @@ private:
   */
   template <typename Message>
   GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
-
     _handleLabelsStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
