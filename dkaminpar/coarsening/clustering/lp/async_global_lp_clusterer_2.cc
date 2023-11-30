@@ -166,6 +166,8 @@ public:
     std::cout << "Number of Nodes = " << _graph->n() << std::endl;
     }
 
+    NodeID prev_num_moved_nodes = 0;
+
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       if (rank == 0) {
       std::cout << "Print values: " << std::endl;
@@ -178,7 +180,6 @@ public:
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
 
       std::atomic<NodeID> local_num_moved_nodes = 0;
-      NodeID prev_num_moved_nodes = 0;
 
       if (!has_iterated) {
         // first chunk's computation

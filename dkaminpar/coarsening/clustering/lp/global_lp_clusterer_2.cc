@@ -159,14 +159,21 @@ public:
     bool has_iterated = false;
 
     int rank = mpi::get_comm_rank(_graph->communicator());
+    
+    NodeID prev_num_moved_nodes = 0;
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
+      if (rank == 0) {
+      std::cout << "Print values: " << std::endl;
+      std::cout << "Current Iteration = " << iteration << std::endl;
+      std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
+      }
+      
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
       const auto [last_from, last_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, num_chunks-1);
 
       std::atomic<NodeID> local_num_moved_nodes = 0;
-      NodeID prev_num_moved_nodes = 0;
 
       if (!has_iterated) {
         // first chunk's computation
