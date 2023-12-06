@@ -162,7 +162,7 @@ public:
         // previous iteration's last chunk's communication and first chunk computation of current iteration
         local_num_moved_nodes = process_chunk_computation(from, to);
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
-        handle_labels(last_from, last_to, buffers, size);
+        handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
@@ -171,13 +171,13 @@ public:
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
         local_num_moved_nodes = process_chunk_computation(from, to);
         global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
-        handle_labels(prev_from, prev_to, buffers, size);
+        handle_labels(prev_from, prev_to, buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
-        handle_labels(last_from, last_to, buffers, size);
+        handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
@@ -607,9 +607,13 @@ private:
    * process labels received in the previous iteration
   */
   template <typename Message>
-  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
+  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size, const int global_num_moved_nodes) {
 
     control_cluster_weights(from, to);
+
+    if (global_num_moved_nodes <= 0) {
+      return;
+    }
 
     // handling messages
     for (int i = 0; i < size; ++i) {
