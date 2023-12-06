@@ -131,6 +131,10 @@ public:
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
   std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncEnd;
+  std::chrono::duration<double> _sgncDuration = std::chrono::duration<double>::zero();
+
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -174,6 +178,8 @@ public:
               << _compDuration.count() << " seconds" << std::endl;
     //std::cout << "Time taken for handleLabels() operations: "
     //          << _handleLabelsDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for synchronize_ghost_node_clusters() operations: "
+              << _sgncDuration.count() << " seconds" << std::endl;
 
     return clusters();
   }
@@ -582,6 +588,7 @@ private:
   }
 
   void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
+    _sgncStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     SCOPED_TIMER("Synchronize ghost node clusters");
@@ -640,6 +647,8 @@ private:
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
+    _sgncEnd = std::chrono::high_resolution_clock::now();
+    _sgncDuration += _sgncEnd - _sgncStart;
   }
 
   /*!

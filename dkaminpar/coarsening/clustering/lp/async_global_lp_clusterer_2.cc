@@ -136,6 +136,10 @@ public:
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
   std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallEnd;
+  std::chrono::duration<double> _handleLabelsCallDuration = std::chrono::duration<double>::zero();
+
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -202,7 +206,10 @@ public:
         comp_thread.join();
         _combEnd = std::chrono::high_resolution_clock::now();
         _combDuration += _combEnd - _combStart;
-        handle_labels(last_from, last_to, buffers, size);
+        _handleLabelsCallStart = std::chrono::high_resolution_clock::now();
+        handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
+        _handleLabelsCallEnd = std::chrono::high_resolution_clock::now();
+        _handleLabelsCallDuration += _handleLabelsCallEnd - _handleLabelsCallStart;
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
@@ -217,7 +224,10 @@ public:
         comp_thread.join();
         _combEnd = std::chrono::high_resolution_clock::now();
         _combDuration += _combEnd - _combStart;
-        handle_labels(prev_from, prev_to, buffers, size);
+        _handleLabelsCallStart = std::chrono::high_resolution_clock::now();
+        handle_labels(prev_from, prev_to, buffers, size, global_num_moved_nodes);
+        _handleLabelsCallEnd = std::chrono::high_resolution_clock::now();
+        _handleLabelsCallDuration += _handleLabelsCallEnd - _handleLabelsCallStart;
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
@@ -226,7 +236,10 @@ public:
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
         _combEnd = std::chrono::high_resolution_clock::now();
         _combDuration += _combEnd - _combStart;
-        handle_labels(last_from, last_to, buffers, size);
+        _handleLabelsCallStart = std::chrono::high_resolution_clock::now();
+        handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
+        _handleLabelsCallEnd = std::chrono::high_resolution_clock::now();
+        _handleLabelsCallDuration += _handleLabelsCallEnd - _handleLabelsCallStart;
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
@@ -243,6 +256,8 @@ public:
               << _combDuration.count() << " seconds" << std::endl;
     std::cout << "Time taken for handleLabels() operations: "
               << _handleLabelsDuration.count() << " seconds" << std::endl;
+    std::cout << "Time taken for handleLabelsCall() operations: "
+              << _handleLabelsCallDuration.count() << " seconds" << std::endl;
 
     /*std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
     std::cout << "Total number of labels received (rank, #Labels): " << rank << ", " << _total_received_labels << std::endl;
@@ -720,10 +735,15 @@ private:
    * *process labels received in the previous iteration
   */
   template <typename Message>
-  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
+  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size, const int global_num_moved_nodes) {
+
     _handleLabelsStart = std::chrono::high_resolution_clock::now();
 
     control_cluster_weights(from, to);
+
+    if (global_num_moved_nodes <= 0) {
+      return;
+    }
 
     // handling messages
     for (int i = 0; i < size; ++i) {
@@ -736,6 +756,7 @@ private:
       PEID owner = i;
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
         auto &weight_delta_handle = _weight_delta_handles_ets.local();
+
         // iterate for each interface node, that has received an update
         for (std::size_t j = r.begin(); j != r.end(); ++j) {
           const auto [owner_lnode, new_gcluster] = buffer[j];
