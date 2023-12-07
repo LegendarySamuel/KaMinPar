@@ -611,7 +611,8 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
     Mapper &&mapper,
     Filter &&filter,
     Builder &&builder,
-    Receiver &&receiver
+    Receiver &&receiver,
+    std::vector<std::chrono::duration<double>> &durations
 ) {
   SCOPED_TIMER("Sparse AllToAll InterfaceToPE");
 
@@ -641,6 +642,7 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
       num_threads, cache_aligned_vector<std::size_t>(size)
   );
 
+std::chrono::time_point<std::chrono::high_resolution_clock> _messageCountStart = std::chrono::high_resolution_clock::now();
 #pragma omp parallel default(none) shared(size, from, to, mapper, filter, graph, num_messages)
   {
     Marker<> created_message_for_pe(static_cast<std::size_t>(size));
@@ -678,16 +680,22 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
       created_message_for_pe.reset();
     }
   }
+  std::chrono::time_point<std::chrono::high_resolution_clock> _messageCountEnd = std::chrono::high_resolution_clock::now();
+  durations[0] += _messageCountEnd - _messageCountStart;
 
   // Offset messages for each thread
   internal::inclusive_col_prefix_sum(num_messages);
 
+  auto _allocateBuffersStart = std::chrono::high_resolution_clock::now();
   // Allocate send buffers
   std::vector<Buffer> send_buffers(size);
   tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
     send_buffers[pe].resize(num_messages.back()[pe]);
   });
+  std::chrono::time_point<std::chrono::high_resolution_clock> _allocateBuffersEnd = std::chrono::high_resolution_clock::now();
+  durations[1] += _allocateBuffersEnd - _allocateBuffersStart;
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _fillBuffersStart = std::chrono::high_resolution_clock::now();
   // Fill buffers
 #pragma omp parallel default(none)                                                                 \
     shared(send_buffers, size, from, to, mapper, builder, filter, graph, num_messages)
@@ -735,11 +743,19 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
       created_message_for_pe.reset();
     }
   }
+  std::chrono::time_point<std::chrono::high_resolution_clock> _fillBuffersEnd = std::chrono::high_resolution_clock::now();
+  durations[2] += _fillBuffersEnd - _fillBuffersStart;
 
   STOP_TIMER();
-  sparse_alltoall_clustering<Message, Buffer>(
+  /*sparse_alltoall_clustering<Message, Buffer>(
       std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
+  );*/
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sparseAllToAllvStart = std::chrono::high_resolution_clock::now();
+  sparse_alltoall_alltoallv_clustering<Message, Buffer>(
+      std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator(), durations
   );
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sparseAllToAllvEnd = std::chrono::high_resolution_clock::now();
+  durations[3] += _sparseAllToAllvEnd - _sparseAllToAllvStart;
 } // namespace dkaminpar::mpi::graph
 
 // Copy for mpi comm time tracking
@@ -755,7 +771,8 @@ void sparse_alltoall_interface_to_pe_clustering(
     const NodeID to,
     Filter &&filter,
     Builder &&builder,
-    Receiver &&receiver
+    Receiver &&receiver,
+    std::vector<std::chrono::duration<double>> &durations
 ) {
   sparse_alltoall_interface_to_pe_custom_range_clustering<Message, Buffer>(
       graph,
@@ -764,7 +781,8 @@ void sparse_alltoall_interface_to_pe_clustering(
       [](const NodeID u) { return u; },
       std::forward<Filter>(filter),
       std::forward<Builder>(builder),
-      std::forward<Receiver>(receiver)
+      std::forward<Receiver>(receiver),
+      durations
   );
 }
 

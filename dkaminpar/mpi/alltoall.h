@@ -171,10 +171,9 @@ void sparse_alltoall_complete(SendBuffers &&send_buffers, Receiver &&receiver, M
 
   STOP_TIMER();
 }
-
 // copy for mpi comm time tracking
 template <typename Message, typename Buffer, typename SendBuffers, typename Receiver>
-void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm) {
+void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm, std::vector<std::chrono::duration<double>> &durations) {
   // Note: copies data twice which could be avoided
   using namespace internal;
 
@@ -192,10 +191,14 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
     send_counts[pe] = asserting_cast<int>(send_buffers[pe].size());
   }
   parallel::prefix_sum(send_counts.begin(), send_counts.end(), send_displs.begin() + 1);
+  auto mpiStart = std::chrono::high_resolution_clock::now();
   mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
+  auto mpiEnd = std::chrono::high_resolution_clock::now();
+  durations[8] += mpiEnd - mpiStart;
 
   parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _buildSharedSendBufferStart = std::chrono::high_resolution_clock::now();
   // Build shared send buffer
   Buffer common_send_buffer;
   common_send_buffer.reserve(send_displs.back() + send_counts.back());
@@ -209,6 +212,8 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
       [[maybe_unused]] auto clear = std::move(send_buffers[pe]);
     }
   }
+  std::chrono::time_point<std::chrono::high_resolution_clock> _buildSharedSendBufferEnd = std::chrono::high_resolution_clock::now();
+  durations[4] += _buildSharedSendBufferEnd - _buildSharedSendBufferStart;
 
   // Exchange data
   Buffer common_recv_buffer(recv_displs.back() + recv_counts.back());
@@ -216,6 +221,8 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   STOP_TIMER();
   START_TIMER("Alltoall MPI");
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _alltoallvCallStart = std::chrono::high_resolution_clock::now();
+  mpiStart = std::chrono::high_resolution_clock::now();
   mpi::alltoallv(
       common_send_buffer.data(),
       send_counts.data(),
@@ -225,11 +232,20 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
       recv_displs.data(),
       comm
   );
+  mpiEnd = std::chrono::high_resolution_clock::now();
+  durations[8] += mpiEnd - mpiStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _alltoallvCallEnd = std::chrono::high_resolution_clock::now();
+  durations[5] += _alltoallvCallEnd - _alltoallvCallStart;
+
+  mpiStart = std::chrono::high_resolution_clock::now();
   mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
+  mpiEnd = std::chrono::high_resolution_clock::now();
+  durations[8] += mpiEnd - mpiStart;
 
   STOP_TIMER();
   START_TIMER("Alltoall construction");
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _buildOutputReceiveBufferStart = std::chrono::high_resolution_clock::now();
   // Call receiver
   std::vector<Buffer> recv_buffers(size);
   tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
@@ -238,13 +254,18 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
       recv_buffers[pe][i] = common_recv_buffer[recv_displs[pe] + i];
     });
   });
+  std::chrono::time_point<std::chrono::high_resolution_clock> _buildOutputReceiveBufferEnd = std::chrono::high_resolution_clock::now();
+  durations[6] += _buildOutputReceiveBufferEnd - _buildOutputReceiveBufferStart;
 
   STOP_TIMER();
   START_TIMER("Alltoall processing");
 
+  std::chrono::time_point<std::chrono::high_resolution_clock> _invokeReceiverStart = std::chrono::high_resolution_clock::now();
   for (PEID pe = 0; pe < size; ++pe) {
     invoke_receiver(std::move(recv_buffers[pe]), pe, receiver);
   }
+  std::chrono::time_point<std::chrono::high_resolution_clock> _invokeReceiverEnd = std::chrono::high_resolution_clock::now();
+  durations[7] += _invokeReceiverEnd - _invokeReceiverStart;
 
   STOP_TIMER();
 }

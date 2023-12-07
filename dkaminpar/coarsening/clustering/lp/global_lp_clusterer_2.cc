@@ -149,6 +149,8 @@ public:
   std::chrono::time_point<std::chrono::high_resolution_clock> _sgncEnd;
   std::chrono::duration<double> _sgncDuration = std::chrono::duration<double>::zero();
 
+  std::vector<std::chrono::duration<double>> _durations;
+
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -174,6 +176,10 @@ public:
 
     bool has_iterated = false;
 
+    if (_durations.size() == 0) {
+      _durations = std::vector<std::chrono::duration<double>>(9, std::chrono::duration<double>::zero());
+    }
+
     int rank = mpi::get_comm_rank(_graph->communicator());
     
     /*if (rank == 0) {
@@ -188,7 +194,7 @@ public:
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       if (rank == 0) {
       //std::cout << "Print values: " << std::endl;
-      std::cout << "Current Iteration = " << iteration << std::endl;
+      LOG << "Current Iteration = " << iteration;
       //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
       }
       
@@ -246,25 +252,37 @@ public:
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
-        std::cout << "No changes, break." << std::endl;
+        LOG << "No changes, break.";
         break;
       }
     }
 
-    std::cout << "Time taken for communication() operations: "
-              << _commDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for computation() operations: "
-              << _compDuration.count() << " seconds" << std::endl;
-    std::cout << "Actual time passed during comm() and comp() operations: "
-              << _combDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for handleLabels() operations: "
-              << _handleLabelsDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for handleLabelsCall() operations: "
-              << _handleLabelsCallDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for sparsealltoall() operations: "
-              << _sataDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for synchronize_ghost_node_clusters() operations: "
-              << _sgncDuration.count() << " seconds" << std::endl;
+    LOG << "Time taken for communication() operations: "
+              << _commDuration.count() << " seconds";
+    LOG << "Time taken for computation() operations: "
+              << _compDuration.count() << " seconds";
+    LOG << "Actual time passed during comm() and comp() operations: "
+              << _combDuration.count() << " seconds";
+    LOG << "Time taken for handleLabels() operations: "
+              << _handleLabelsDuration.count() << " seconds";
+    LOG << "Time taken for handleLabelsCall() operations: "
+              << _handleLabelsCallDuration.count() << " seconds";
+    LOG << "Time taken for sparsealltoall() operations: "
+              << _sataDuration.count() << " seconds";
+    LOG << "Time taken for synchronize_ghost_node_clusters() operations: "
+              << _sgncDuration.count() << " seconds";
+
+    
+    LOG << "Time taken for messageCountCalculations(): " << _durations[0].count() << " seconds.";
+    LOG << "Time taken for allocateBuffersOperations(): " << _durations[1].count() << " seconds.";
+    LOG << "Time taken for fillBuffersOperations(): " << _durations[2].count() << " seconds.";
+    LOG << "Time taken for sparse_alltoall_alltoallv-Call(): " << _durations[3].count() << " seconds.";
+
+    LOG << "Time taken for buildSharedSendBufferOperations(): " << _durations[4].count() << " seconds.";
+    LOG << "Time taken for alltoallvCall(): " << _durations[5].count() << " seconds.";
+    LOG << "Time taken for buildOutputReceiveBufferOperations(): " << _durations[6].count() << " seconds.";
+    LOG << "Time taken for invokeReceiverOperations(): " << _durations[7].count() << " seconds.";
+    LOG << "Time taken for MPI-Operations(): " << _durations[8].count() << " seconds.";
 
     /*std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
     std::cout << "Total number of labels received (rank, #Labels): " << rank << ", " << _total_received_labels << std::endl;
@@ -733,7 +751,8 @@ private:
           _total_received_labels += buffer.size();
 
           msgBuffers[owner] = std::move(buffer);
-        }
+        },
+        _durations
     );
     _sataEnd = std::chrono::high_resolution_clock::now();
     _sataDuration += _sataEnd - _sataStart;

@@ -630,7 +630,7 @@ mpi::barrier(_graph->communicator());
 
 mpi::barrier(_graph->communicator());
     // performing sparse all to all communication and handling messages
-    mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
+    mpi::graph::sparse_alltoall_interface_to_pe/*_clustering*/<ChangedLabelMessage>(
         *_graph,
         from,
         to,

@@ -139,6 +139,8 @@ public:
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallStart;
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallEnd;
   std::chrono::duration<double> _handleLabelsCallDuration = std::chrono::duration<double>::zero();
+  
+  std::vector<std::chrono::duration<double>> _durations;
 
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
@@ -165,6 +167,10 @@ public:
 
     bool has_iterated = false;
 
+    if (_durations.size() == 0) {
+      _durations = std::vector<std::chrono::duration<double>>(9, std::chrono::duration<double>::zero());
+    }
+
     int rank = mpi::get_comm_rank(_graph->communicator());
 
     /*if (rank == 0) {
@@ -179,7 +185,7 @@ public:
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
       if (rank == 0) {
       //std::cout << "Print values: " << std::endl;
-      std::cout << "Current Iteration = " << iteration << std::endl;
+      LOG << "Current Iteration = " << iteration;
       //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
       }
 
@@ -243,21 +249,33 @@ public:
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
-        std::cout << "No changes, break." << std::endl;
+        LOG << "No changes, break.";
         break;
       }
     }
 
-    std::cout << "Time taken for communication() operations: "
-              << _commDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for computation() operations: "
-              << _compDuration.count() << " seconds" << std::endl;
-    std::cout << "Actual time passed during comm() and comp() operations: "
-              << _combDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for handleLabels() operations: "
-              << _handleLabelsDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for handleLabelsCall() operations: "
-              << _handleLabelsCallDuration.count() << " seconds" << std::endl;
+    LOG << "Time taken for communication() operations: "
+              << _commDuration.count() << " seconds";
+    LOG << "Time taken for computation() operations: "
+              << _compDuration.count() << " seconds";
+    LOG << "Actual time passed during comm() and comp() operations: "
+              << _combDuration.count() << " seconds";
+    LOG << "Time taken for handleLabels() operations: "
+              << _handleLabelsDuration.count() << " seconds";
+    LOG << "Time taken for handleLabelsCall() operations: "
+              << _handleLabelsCallDuration.count() << " seconds";
+
+
+    LOG << "Time taken for messageCountCalculations(): " << _durations[0].count() << " seconds.";
+    LOG << "Time taken for allocateBuffersOperations(): " << _durations[1].count() << " seconds.";
+    LOG << "Time taken for fillBuffersOperations(): " << _durations[2].count() << " seconds.";
+    LOG << "Time taken for sparse_alltoall_alltoallv-Call(): " << _durations[3].count() << " seconds.";
+
+    LOG << "Time taken for buildSharedSendBufferOperations(): " << _durations[4].count() << " seconds.";
+    LOG << "Time taken for alltoallvCall(): " << _durations[5].count() << " seconds.";
+    LOG << "Time taken for buildOutputReceiveBufferOperations(): " << _durations[6].count() << " seconds.";
+    LOG << "Time taken for invokeReceiverOperations(): " << _durations[7].count() << " seconds.";
+    LOG << "Time taken for MPI-Operations(): " << _durations[8].count() << " seconds.";
 
     /*std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
     std::cout << "Total number of labels received (rank, #Labels): " << rank << ", " << _total_received_labels << std::endl;
@@ -668,26 +686,6 @@ private:
     return local_num_moved_nodes;
   }
 
-  // TODO communication, write into buffer
-  GlobalNodeID process_chunk_communication(const NodeID from, const NodeID to, const NodeID local_num_moved_nodes) {
-    
-    START_TIMER("Chunk communication");
-
-    mpi::barrier(_graph->communicator());
-    const GlobalNodeID global_num_moved_nodes =
-        mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
-    
-    control_cluster_weights(from, to);
-
-    if (global_num_moved_nodes > 0) {
-      synchronize_ghost_node_clusters(from, to);
-    }
-    
-    STOP_TIMER();
-
-    return global_num_moved_nodes;
-  }
-
   int _total_received_labels = 0;
   /**
    * *communicate the labels of the current iteration
@@ -721,7 +719,8 @@ private:
           _total_received_labels += buffer.size();
 
           msgBuffers[owner] = std::move(buffer);
-        }
+        },
+        _durations
     );
 
     _commEnd = std::chrono::high_resolution_clock::now();
@@ -795,68 +794,6 @@ private:
     
     _handleLabelsEnd = std::chrono::high_resolution_clock::now();
     _handleLabelsDuration += _handleLabelsEnd - _handleLabelsStart;
-  }
-
-    // TODO send _changed_label asynchronously
-  void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
-
-    SCOPED_TIMER("Synchronize ghost node clusters");
-
-    struct ChangedLabelMessage {
-      NodeID owner_lnode;
-      ClusterID new_gcluster;
-    };
-
-mpi::barrier(_graph->communicator());
-    // performing sparse all to all communication and handling messages
-    mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
-        *_graph,
-        from,
-        to,
-        [&](const NodeID lnode) { return _changed_label[lnode] != kInvalidGlobalNodeID; },
-        [&](const NodeID lnode) -> ChangedLabelMessage {
-          return {lnode, cluster(lnode)};
-        },
-        [&](const auto &buffer, const PEID owner) {
-          tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
-            auto &weight_delta_handle = _weight_delta_handles_ets.local();
-
-            // iterate for each interface node, that has received an update
-            for (std::size_t i = r.begin(); i != r.end(); ++i) {
-              const auto [owner_lnode, new_gcluster] = buffer[i];
-
-              const GlobalNodeID gnode = _graph->offset_n(owner) + owner_lnode;
-              KASSERT(!_graph->is_owned_global_node(gnode));
-
-              const NodeID lnode = _graph->global_to_local_node(gnode);
-              
-              const NodeWeight weight = _graph->node_weight(lnode);
-
-              const GlobalNodeID old_gcluster = cluster(lnode);
-
-              // If we synchronize the weights of clusters with local
-              // changes, we already have the right weight including ghost
-              // vertices --> only update weight if we did not get an update
-
-              if (!should_sync_cluster_weights() ||
-                  weight_delta_handle.find(old_gcluster + 1) == weight_delta_handle.end()) {
-                change_cluster_weight(old_gcluster, -weight, true);
-              }
-
-              // move node to the newly assigned cluster
-              NonatomicOwnedClusterVector::move_node(lnode, new_gcluster);
-              if (!should_sync_cluster_weights() ||
-                  weight_delta_handle.find(new_gcluster + 1) == weight_delta_handle.end()) {
-                change_cluster_weight(new_gcluster, weight, false);
-              }
-            }
-          });
-        }
-    );
-
-    _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
-      _changed_label[lnode] = kInvalidGlobalNodeID;
-    });
   }
 
   /*!
