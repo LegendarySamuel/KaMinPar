@@ -139,6 +139,14 @@ public:
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallStart;
   std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallEnd;
   std::chrono::duration<double> _handleLabelsCallDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sataStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sataEnd;
+  std::chrono::duration<double> _sataDuration = std::chrono::duration<double>::zero();
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncStart;
+  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncEnd;
+  std::chrono::duration<double> _sgncDuration = std::chrono::duration<double>::zero();
   
   std::vector<std::chrono::duration<double>> _durations;
 
@@ -264,6 +272,10 @@ public:
               << _handleLabelsDuration.count() << " seconds";
     LOG << "Time taken for handleLabelsCall() operations: "
               << _handleLabelsCallDuration.count() << " seconds";
+    LOG << "Time taken for sparsealltoall() operations: "
+              << _sataDuration.count() << " seconds";
+    LOG << "Time taken for synchronize_ghost_node_clusters() operations: "
+              << _sgncDuration.count() << " seconds";
 
 
     LOG << "Time taken for messageCountCalculations(): " << _durations[0].count() << " seconds.";
@@ -703,6 +715,7 @@ private:
       return global_num_moved_nodes;
     }
 
+    _sataStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     // performing sparse all to all communication and writing into msgBuffer
@@ -722,6 +735,9 @@ private:
         },
         _durations
     );
+    _sataEnd = std::chrono::high_resolution_clock::now();
+    _sataDuration += _sataEnd - _sataStart;
+    _sgncDuration += _sataEnd - _sataStart;
 
     _commEnd = std::chrono::high_resolution_clock::now();
     _commDuration += _commEnd - _commStart;
@@ -744,6 +760,7 @@ private:
       return;
     }
 
+    _sgncStart = std::chrono::high_resolution_clock::now();
     // handling messages
     for (int i = 0; i < size; ++i) {
       NoinitVector<Message> buffer = std::move(msgBuffers[i]);
@@ -791,6 +808,8 @@ private:
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
+    _sgncEnd = std::chrono::high_resolution_clock::now();
+    _sgncDuration += _sgncEnd - _sgncStart;
     
     _handleLabelsEnd = std::chrono::high_resolution_clock::now();
     _handleLabelsDuration += _handleLabelsEnd - _handleLabelsStart;
