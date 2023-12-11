@@ -121,36 +121,6 @@ public:
     STOP_TIMER();
   }
 
-  std::chrono::time_point<std::chrono::high_resolution_clock> _commStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _commEnd;
-  std::chrono::duration<double> _commDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _compStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _compEnd;
-  std::chrono::duration<double> _compDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _combStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _combEnd;
-  std::chrono::duration<double> _combDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
-  std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsCallEnd;
-  std::chrono::duration<double> _handleLabelsCallDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _sataStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _sataEnd;
-  std::chrono::duration<double> _sataDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncEnd;
-  std::chrono::duration<double> _sgncDuration = std::chrono::duration<double>::zero();
-
-  std::vector<std::chrono::duration<double>> _durations;
-
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -176,27 +146,9 @@ public:
 
     bool has_iterated = false;
 
-    if (_durations.size() == 0) {
-      _durations = std::vector<std::chrono::duration<double>>(9, std::chrono::duration<double>::zero());
-    }
-
-    int rank = mpi::get_comm_rank(_graph->communicator());
-    
-    /*if (rank == 0) {
-    std::cout << "Print constants: " << std::endl;
-    std::cout << "Max Num Iterations = " << _max_num_iterations << std::endl;
-    std::cout << "Num Chunks = " << num_chunks << std::endl; 
-    std::cout << "Number of Nodes = " << _graph->n() << std::endl;
-    }*/
-
     NodeID prev_num_moved_nodes = 0;
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
-      if (rank == 0) {
-      //std::cout << "Print values: " << std::endl;
-      LOG << "Current Iteration = " << iteration;
-      //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
-      }
       
       GlobalNodeID global_num_moved_nodes = 0;
       const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, 0);
@@ -206,88 +158,34 @@ public:
 
       if (!has_iterated) {
         // first chunk's computation
-        _combStart = std::chrono::high_resolution_clock::now();
         prev_num_moved_nodes = process_chunk_computation(from, to);
-        _combEnd = std::chrono::high_resolution_clock::now();
-        _combDuration += _combEnd - _combStart;
         has_iterated = true;
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
-        _combStart = std::chrono::high_resolution_clock::now();
         local_num_moved_nodes = process_chunk_computation(from, to);
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
-        _combEnd = std::chrono::high_resolution_clock::now();
-        _combDuration += _combEnd - _combStart;
-        _handleLabelsCallStart = std::chrono::high_resolution_clock::now();
         handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
-        _handleLabelsCallEnd = std::chrono::high_resolution_clock::now();
-        _handleLabelsCallDuration += _handleLabelsCallEnd - _handleLabelsCallStart;
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
-        _combStart = std::chrono::high_resolution_clock::now();
         local_num_moved_nodes = process_chunk_computation(from, to);
         global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
-        _combEnd = std::chrono::high_resolution_clock::now();
-        _combDuration += _combEnd - _combStart;
-        _handleLabelsCallStart = std::chrono::high_resolution_clock::now();
         handle_labels(prev_from, prev_to, buffers, size, global_num_moved_nodes);
-        _handleLabelsCallEnd = std::chrono::high_resolution_clock::now();
-        _handleLabelsCallDuration += _handleLabelsCallEnd - _handleLabelsCallStart;
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        _combStart = std::chrono::high_resolution_clock::now();
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
-        _combEnd = std::chrono::high_resolution_clock::now();
-        _combDuration += _combEnd - _combStart;
-        _handleLabelsCallStart = std::chrono::high_resolution_clock::now();
         handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
-        _handleLabelsCallEnd = std::chrono::high_resolution_clock::now();
-        _handleLabelsCallDuration += _handleLabelsCallEnd - _handleLabelsCallStart;
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
-        LOG << "No changes, break.";
         break;
       }
     }
-
-    LOG << "Time taken for communication() operations: "
-              << _commDuration.count() << " seconds";
-    LOG << "Time taken for computation() operations: "
-              << _compDuration.count() << " seconds";
-    LOG << "Actual time passed during comm() and comp() operations: "
-              << _combDuration.count() << " seconds";
-    LOG << "Time taken for handleLabels() operations: "
-              << _handleLabelsDuration.count() << " seconds";
-    LOG << "Time taken for handleLabelsCall() operations: "
-              << _handleLabelsCallDuration.count() << " seconds";
-    LOG << "Time taken for sparsealltoall() operations: "
-              << _sataDuration.count() << " seconds";
-    LOG << "Time taken for synchronize_ghost_node_clusters() operations: "
-              << _sgncDuration.count() << " seconds";
-
-    
-    LOG << "Time taken for messageCountCalculations(): " << _durations[0].count() << " seconds.";
-    LOG << "Time taken for allocateBuffersOperations(): " << _durations[1].count() << " seconds.";
-    LOG << "Time taken for fillBuffersOperations(): " << _durations[2].count() << " seconds.";
-    LOG << "Time taken for sparse_alltoall_alltoallv-Call(): " << _durations[3].count() << " seconds.";
-
-    LOG << "Time taken for buildSharedSendBufferOperations(): " << _durations[4].count() << " seconds.";
-    LOG << "Time taken for alltoallvCall(): " << _durations[5].count() << " seconds.";
-    LOG << "Time taken for buildOutputReceiveBufferOperations(): " << _durations[6].count() << " seconds.";
-    LOG << "Time taken for invokeReceiverOperations(): " << _durations[7].count() << " seconds.";
-    LOG << "Time taken for MPI-Operations(): " << _durations[8].count() << " seconds.";
-
-    /*std::cout << "Total number of labels sent (number to be sent, not actual number of sent labels) (rank, #Labels): " << rank << ", " << _total_sent_labels << std::endl;
-    std::cout << "Total number of labels received (rank, #Labels): " << rank << ", " << _total_received_labels << std::endl;
-    std::cout << "Total number of labels handled (rank, #Labels): " << rank << ", " << _total_handled_labels << std::endl;*/
-
     return clusters();
   }
 
@@ -414,7 +312,6 @@ public:
     return false;
   }
 
-  int _total_sent_labels = 0;
   /*
    * Clusters
    */
@@ -423,10 +320,6 @@ public:
     KASSERT(lu < _changed_label.size());
     _changed_label[lu] = this->cluster(lu);
     NonatomicOwnedClusterVector::move_node(lu, gcluster);
-
-    if (is_interface_node(lu)) {
-      ++_total_sent_labels;
-    }
 
     // Detect if a node was moved back to its original cluster
     if (_c_ctx.global_lp.prevent_cyclic_moves && gcluster == initial_cluster(lu)) {
@@ -699,7 +592,6 @@ private:
 
   // no mpi communication
   NodeID process_chunk_computation(const NodeID from, const NodeID to) {
-    _compStart = std::chrono::high_resolution_clock::now();
     START_TIMER("Chunk computation");
 
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
@@ -710,20 +602,14 @@ private:
       cluster_isolated_nodes(from, to);
     }
 
-    _compEnd = std::chrono::high_resolution_clock::now();
-    _compDuration += _compEnd - _compStart;
-
     return local_num_moved_nodes;
   }
 
-  int _total_received_labels = 0;
   /** // TODO
    * *communicate the labels of the current iteration
   */
   template <typename Message>
   GlobalNodeID communicate_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers) {
-
-    _commStart = std::chrono::high_resolution_clock::now();
     
     mpi::barrier(_graph->communicator());
 
@@ -734,7 +620,6 @@ private:
       return global_num_moved_nodes;
     }
 
-    _sataStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     // performing sparse all to all communication and writing into msgBuffer
@@ -747,32 +632,19 @@ private:
           return {lnode, cluster(lnode)};
         },
         [&](auto &&buffer, const PEID owner) {
-          
-          _total_received_labels += buffer.size();
 
           msgBuffers[owner] = std::move(buffer);
-        },
-        _durations
+        }
     );
-    _sataEnd = std::chrono::high_resolution_clock::now();
-    _sataDuration += _sataEnd - _sataStart;
-    _sgncDuration += _sataEnd - _sataStart;
-
-    _commEnd = std::chrono::high_resolution_clock::now();
-    _commDuration += _commEnd - _commStart;
 
     return global_num_moved_nodes;
   }
-
-  int _total_handled_labels = 0;
 
   /** // TODO
    * *process labels received in the previous iteration
   */
   template <typename Message>
   void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size, const int global_num_moved_nodes) {
-    
-    _handleLabelsStart = std::chrono::high_resolution_clock::now();
 
     control_cluster_weights(from, to);
 
@@ -780,14 +652,12 @@ private:
       return;
     }
 
-    _sgncStart = std::chrono::high_resolution_clock::now();
     // handling messages
     for (int i = 0; i < size; ++i) {
       NoinitVector<Message> buffer = std::move(msgBuffers[i]);
       if (buffer.empty()) {
         continue;
       }
-      _total_handled_labels += buffer.size();
 
       PEID owner = i;
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
@@ -828,11 +698,6 @@ private:
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
-    _sgncEnd = std::chrono::high_resolution_clock::now();
-    _sgncDuration += _sgncEnd - _sgncStart;
-
-    _handleLabelsEnd = std::chrono::high_resolution_clock::now();
-    _handleLabelsDuration += _handleLabelsEnd - _handleLabelsStart;
   }
 
   void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
