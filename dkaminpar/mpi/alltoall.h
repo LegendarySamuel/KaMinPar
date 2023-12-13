@@ -237,11 +237,6 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   std::chrono::time_point<std::chrono::high_resolution_clock> _alltoallvCallEnd = std::chrono::high_resolution_clock::now();
   durations[5] += _alltoallvCallEnd - _alltoallvCallStart;
 
-  mpiStart = std::chrono::high_resolution_clock::now();
-  mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
-  mpiEnd = std::chrono::high_resolution_clock::now();
-  durations[8] += mpiEnd - mpiStart;
-
   STOP_TIMER();
   START_TIMER("Alltoall construction");
 
