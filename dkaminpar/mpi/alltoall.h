@@ -247,6 +247,54 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   STOP_TIMER();
 }
 
+template <typename Message, typename Buffer, typename SendBuffers, typename RecvBuffers, typename Requests>
+void sparse_alltoall_ialltoallv_clustering(SendBuffers &&send_buffers, RecvBuffers &recv_buffers, Requests &requests, MPI_Comm comm) {
+  // Note: copies data twice which could be avoided
+  using namespace internal;
+
+  const auto [size, rank] = mpi::get_comm_info(comm);
+
+  START_TIMER("Alltoall construction");
+
+  std::vector<int> send_counts(size);
+  std::vector<int> recv_counts(size);
+  std::vector<int> send_displs(size + 1);
+  std::vector<int> recv_displs(size + 1);
+
+  // Exchange send counts
+  for (PEID pe = 0; pe < size; ++pe) {
+    send_counts[pe] = asserting_cast<int>(send_buffers[pe].size());
+  }
+  parallel::prefix_sum(send_counts.begin(), send_counts.end(), send_displs.begin() + 1);
+  mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
+
+  parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
+
+  // Call receiver
+  tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
+    recv_buffers[pe].resize(recv_counts[pe]);
+  });
+
+  STOP_TIMER();
+
+  // start communicating
+  START_TIMER("Isend and Irecv operations");
+  for (PEID pe = 0; pe < size; ++pe) {
+    if (send_counts[pe] != 0) {
+      MPI_Request request;
+      MPI_Isend(send_buffers[pe].data(), send_counts[pe], type::get<Message>(), pe, 0, comm, &request);
+      requests.push_back(request);
+    }
+    if (recv_counts[pe] != 0) {
+      MPI_Request request;
+      MPI_Irecv(recv_buffers[pe].data(), recv_counts[pe], type::get<Message>(), pe, 0, comm, &request);
+      requests.push_back(request);
+    }
+  }
+
+  STOP_TIMER();
+}
+
 // copy for mpi comm time tracking
 template <typename Message, typename Buffer, typename SendBuffers, typename Receiver>
 void sparse_alltoall_complete_clustering(SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm) {

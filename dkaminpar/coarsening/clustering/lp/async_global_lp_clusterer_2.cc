@@ -140,8 +140,11 @@ public:
     // size
     int size = mpi::get_comm_size(graph.communicator());
 
-    // Vector that holds the message elements
-    std::vector<NoinitVector<ChangedLabelMessage>> buffers(size);
+    // requests vector    
+    std::vector<MPI_Request> requests;
+  	
+    // recv_buffers
+    std::vector<NoinitVector<ChangedLabelMessage>> recv_buffers(size);
 
     bool has_iterated = false;
 
@@ -161,30 +164,27 @@ public:
         has_iterated = true;
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
-        std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
-                                  local_num_moved_nodes = process_chunk_computation(from, to);
-                                });
-        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
-        comp_thread.join();
-        handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
+        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, recv_buffers, requests);
+        local_num_moved_nodes = process_chunk_computation(from, to);
+        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        handle_labels(last_from, last_to, recv_buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
-        std::thread comp_thread([from = from, to = to, &local_num_moved_nodes, this]() {
-                                  local_num_moved_nodes = process_chunk_computation(from, to);
-                                });
-        global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
-        comp_thread.join();
-        handle_labels(prev_from, prev_to, buffers, size, global_num_moved_nodes);
+        global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, recv_buffers, requests);
+        local_num_moved_nodes = process_chunk_computation(from, to);
+        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        handle_labels(prev_from, prev_to, recv_buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
-        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
-        handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
+        global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, recv_buffers, requests);
+        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        handle_labels(last_from, last_to, recv_buffers, size, global_num_moved_nodes);
       }
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
@@ -590,8 +590,8 @@ private:
   /**
    * *communicate the labels of the current iteration
   */
-  template <typename Message>
-  GlobalNodeID communicate_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers) {
+  template <typename Message, typename Requests = std::vector<MPI_Request>>
+  GlobalNodeID communicate_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &recv_buffers, Requests &requests ) {
 
     mpi::barrier(_graph->communicator());
 
@@ -613,10 +613,8 @@ private:
         [&](const NodeID lnode) -> Message {
           return {lnode, cluster(lnode)};
         },
-        [&](auto &&buffer, const PEID owner) {
-
-          msgBuffers[owner] = std::move(buffer);
-        }
+        recv_buffers,
+        requests
     );
 
     return global_num_moved_nodes;
@@ -626,7 +624,7 @@ private:
    * *process labels received in the previous iteration
   */
   template <typename Message>
-  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size, const int global_num_moved_nodes) {
+  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &recv_buffers, const int size, const int global_num_moved_nodes) {
 
     control_cluster_weights(from, to);
 
@@ -636,7 +634,7 @@ private:
 
     // handling messages
     for (int i = 0; i < size; ++i) {
-      NoinitVector<Message> buffer = std::move(msgBuffers[i]);
+      NoinitVector<Message> buffer = std::move(recv_buffers[i]);
       if (buffer.empty()) {
         continue;
       }

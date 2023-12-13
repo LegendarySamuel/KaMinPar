@@ -119,22 +119,6 @@ public:
     STOP_TIMER();
   }
 
-  std::chrono::time_point<std::chrono::high_resolution_clock> _commStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _commEnd;
-  std::chrono::duration<double> _commDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _compStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _compEnd;
-  std::chrono::duration<double> _compDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _handleLabelsEnd;
-  std::chrono::duration<double> _handleLabelsDuration = std::chrono::duration<double>::zero();
-
-  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncStart;
-  std::chrono::time_point<std::chrono::high_resolution_clock> _sgncEnd;
-  std::chrono::duration<double> _sgncDuration = std::chrono::duration<double>::zero();
-
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -147,21 +131,7 @@ public:
 
     const int num_chunks = _c_ctx.global_lp.compute_num_chunks(_ctx.parallel);
 
-    int rank = mpi::get_comm_rank(_graph->communicator());
-
-    /*if (rank == 0) {
-    std::cout << "Print constants: " << std::endl;
-    std::cout << "Max Num Iterations = " << _max_num_iterations << std::endl;
-    std::cout << "Num Chunks = " << num_chunks << std::endl; 
-    std::cout << "Number of Nodes = " << _graph->n() << std::endl;
-    }*/
-
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
-      if (rank == 0) {
-      //std::cout << "Print values: " << std::endl;
-      std::cout << "Current Iteration = " << iteration << std::endl;
-      //std::cout << "Current Number of Nodes = " << _graph->n() << std::endl;
-      }
       GlobalNodeID global_num_moved_nodes = 0;
       for (int chunk = 0; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
@@ -171,15 +141,6 @@ public:
         break;
       }
     }
-
-    std::cout << "Time taken for communication() and handleLabels() operations: "
-              << _commDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for computation() operations: "
-              << _compDuration.count() << " seconds" << std::endl;
-    //std::cout << "Time taken for handleLabels() operations: "
-    //          << _handleLabelsDuration.count() << " seconds" << std::endl;
-    std::cout << "Time taken for synchronize_ghost_node_clusters() operations: "
-              << _sgncDuration.count() << " seconds" << std::endl;
 
     return clusters();
   }
@@ -554,14 +515,10 @@ private:
   }
 
   GlobalNodeID process_chunk(const NodeID from, const NodeID to) {
-    _compStart = std::chrono::high_resolution_clock::now();
     START_TIMER("Chunk iteration");
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
     STOP_TIMER();
-    _compEnd = std::chrono::high_resolution_clock::now();
-    _compDuration += _compEnd - _compStart;
 
-    _commStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     const GlobalNodeID global_num_moved_nodes =
@@ -573,22 +530,15 @@ private:
     if (global_num_moved_nodes > 0) {
       synchronize_ghost_node_clusters(from, to);
     }
-    _commEnd = std::chrono::high_resolution_clock::now();
-    _commDuration += _commEnd - _commStart;
 
-
-    _compStart = std::chrono::high_resolution_clock::now();
     if (_c_ctx.global_lp.merge_singleton_clusters) {
       cluster_isolated_nodes(from, to);
     }
-    _compEnd = std::chrono::high_resolution_clock::now();
-    _compDuration += _compEnd - _compStart;
 
     return global_num_moved_nodes;
   }
 
   void synchronize_ghost_node_clusters(const NodeID from, const NodeID to) {
-    _sgncStart = std::chrono::high_resolution_clock::now();
     mpi::barrier(_graph->communicator());
 
     SCOPED_TIMER("Synchronize ghost node clusters");
@@ -598,7 +548,7 @@ private:
       ClusterID new_gcluster;
     };
 
-    mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
+    mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
         *_graph,
         from,
         to,
@@ -647,8 +597,6 @@ private:
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
-    _sgncEnd = std::chrono::high_resolution_clock::now();
-    _sgncDuration += _sgncEnd - _sgncStart;
   }
 
   /*!

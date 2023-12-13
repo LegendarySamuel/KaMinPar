@@ -623,7 +623,7 @@ private:
     mpi::barrier(_graph->communicator());
 
     // performing sparse all to all communication and writing into msgBuffer
-    mpi::graph::sparse_alltoall_interface_to_pe_clustering<Message>(
+    mpi::graph::sparse_alltoall_interface_to_pe<Message>(
         *_graph,
         from,
         to,

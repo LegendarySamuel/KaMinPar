@@ -566,7 +566,10 @@ void sparse_alltoall_interface_to_pe_custom_range(
 
   STOP_TIMER();
 
-  sparse_alltoall<Message, Buffer>(
+  /*sparse_alltoall<Message, Buffer>(
+      std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
+  );*/
+  sparse_alltoall_alltoallv<Message, Buffer>(
       std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
   );
 } // namespace dkaminpar::mpi::graph
@@ -600,10 +603,11 @@ void sparse_alltoall_interface_to_pe(
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,
+    typename RecvBuffers = std::vector<Buffer>,
+    typename Requests = std::vector<MPI_Request>,
     typename Mapper,
     typename Filter,
-    typename Builder,
-    typename Receiver>
+    typename Builder>
 void sparse_alltoall_interface_to_pe_custom_range_clustering(
     const DistributedGraph &graph,
     const NodeID from,
@@ -611,7 +615,8 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
     Mapper &&mapper,
     Filter &&filter,
     Builder &&builder,
-    Receiver &&receiver
+    RecvBuffers &recv_buffers,
+    Requests &requests
 ) {
   SCOPED_TIMER("Sparse AllToAll InterfaceToPE");
 
@@ -740,8 +745,8 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
   /*sparse_alltoall_clustering<Message, Buffer>(
       std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
   );*/
-  sparse_alltoall_alltoallv_clustering<Message, Buffer>(
-      std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
+  sparse_alltoall_ialltoallv_clustering<Message, Buffer>(
+      std::move(send_buffers), recv_buffers, requests, graph.communicator()
   );
 } // namespace dkaminpar::mpi::graph
 
@@ -749,16 +754,18 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,
+    typename RecvBuffers = std::vector<Buffer>,
+    typename Requests = std::vector<MPI_Request>,
     typename Filter,
-    typename Builder,
-    typename Receiver>
+    typename Builder>
 void sparse_alltoall_interface_to_pe_clustering(
     const DistributedGraph &graph,
     const NodeID from,
     const NodeID to,
     Filter &&filter,
     Builder &&builder,
-    Receiver &&receiver
+    RecvBuffers &recv_buffers,
+    Requests &requests
 ) {
   sparse_alltoall_interface_to_pe_custom_range_clustering<Message, Buffer>(
       graph,
@@ -767,7 +774,8 @@ void sparse_alltoall_interface_to_pe_clustering(
       [](const NodeID u) { return u; },
       std::forward<Filter>(filter),
       std::forward<Builder>(builder),
-      std::forward<Receiver>(receiver)
+      recv_buffers,
+      requests
   );
 }
 
