@@ -598,7 +598,7 @@ private:
       ClusterID new_gcluster;
     };
 
-    mpi::graph::sparse_alltoall_interface_to_pe<ChangedLabelMessage>(
+    mpi::graph::sparse_alltoall_interface_to_pe_clustering<ChangedLabelMessage>(
         *_graph,
         from,
         to,
