@@ -226,7 +226,6 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
       recv_displs.data(),
       comm
   );
-  mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
 
   STOP_TIMER();
   START_TIMER("Alltoall construction");
