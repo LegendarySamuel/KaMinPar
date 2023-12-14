@@ -159,10 +159,13 @@ public:
       std::atomic<NodeID> local_num_moved_nodes = 0;
 
       if (!has_iterated) {
+        LOG << "if start";
         // first chunk's computation
         prev_num_moved_nodes = process_chunk_computation(from, to);
         has_iterated = true;
+        LOG << "if end";
       } else {
+        LOG << "else start";
         // previous iteration's last chunk's communication and first chunk computation of current iteration
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, recv_buffers, requests);
         local_num_moved_nodes = process_chunk_computation(from, to);
@@ -170,9 +173,11 @@ public:
         requests.clear();
         handle_labels(last_from, last_to, recv_buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
+        LOG << "else end";
       }
       // loop starts with first communication and second computation
       for (int chunk = 1; chunk < num_chunks; ++chunk) {
+        LOG << "for start";
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
         const auto [prev_from, prev_to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk-1);
         global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, recv_buffers, requests);
@@ -181,18 +186,23 @@ public:
         requests.clear();
         handle_labels(prev_from, prev_to, recv_buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
+        LOG << "for end";
       }
       // last chunk's communication
       if (iteration == _max_num_iterations - 1) {
+        LOG << "last if start";
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, recv_buffers, requests);
         MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
         requests.clear();
         handle_labels(last_from, last_to, recv_buffers, size, global_num_moved_nodes);
+        LOG << "last if end";
       }
+      LOG << "after loop";
 
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
         break;
       }
+      LOG << "level done";
     }
     return clusters();
   }
