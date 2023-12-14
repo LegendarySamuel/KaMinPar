@@ -279,8 +279,9 @@ void sparse_alltoall_ialltoallv_clustering(SendBuffers &&send_buffers, RecvBuffe
   parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
 
   // Call receiver
+  std::vector<NoinitVector<Message>> local_recv_buffers(size);
   tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
-    recv_buffers[pe].resize(recv_counts[pe]);
+    local_recv_buffers[pe].resize(recv_counts[pe]);
   });
 
   STOP_TIMER();
@@ -295,10 +296,11 @@ void sparse_alltoall_ialltoallv_clustering(SendBuffers &&send_buffers, RecvBuffe
     }
     if (recv_counts[pe] != 0) {
       MPI_Request request;
-      MPI_Irecv(recv_buffers[pe].data(), recv_counts[pe], type::get<Message>(), pe, 0, comm, &request);
+      MPI_Irecv(local_recv_buffers[pe].data(), recv_counts[pe], type::get<Message>(), pe, 0, comm, &request);
       requests.push_back(request);
     }
   }
+  recv_buffers = std::move(local_recv_buffers);
 
   STOP_TIMER();
 }
