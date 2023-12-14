@@ -627,7 +627,7 @@ private:
    * *process labels received in the previous iteration
   */
   template <typename Message>
-  void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &recv_buffers, const int size, const int global_num_moved_nodes) {
+  void handle_labels(const int from, const int to, const std::vector<NoinitVector<Message>> &recv_buffers, const int size, const int global_num_moved_nodes) {
 
     control_cluster_weights(from, to);
 
@@ -637,18 +637,17 @@ private:
 
     // handling messages
     for (int i = 0; i < size; ++i) {
-      NoinitVector<Message> buffer = std::move(recv_buffers[i]);
-      if (buffer.empty()) {
+      if (recv_buffers[i].empty()) {
         continue;
       }
       
       PEID owner = i;
-      tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
+      tbb::parallel_for(tbb::blocked_range<std::size_t>(0, recv_buffers[i].size()), [&](const auto &r) {
         auto &weight_delta_handle = _weight_delta_handles_ets.local();
 
         // iterate for each interface node, that has received an update
         for (std::size_t j = r.begin(); j != r.end(); ++j) {
-          const auto [owner_lnode, new_gcluster] = buffer[j];
+          const auto [owner_lnode, new_gcluster] = recv_buffers[i][j];
 
           const GlobalNodeID gnode = _graph->offset_n(owner) + owner_lnode;
           KASSERT(!_graph->is_owned_global_node(gnode));
