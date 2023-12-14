@@ -167,6 +167,7 @@ public:
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, recv_buffers, requests);
         local_num_moved_nodes = process_chunk_computation(from, to);
         MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        requests.clear();
         handle_labels(last_from, last_to, recv_buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
@@ -177,6 +178,7 @@ public:
         global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, recv_buffers, requests);
         local_num_moved_nodes = process_chunk_computation(from, to);
         MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        requests.clear();
         handle_labels(prev_from, prev_to, recv_buffers, size, global_num_moved_nodes);
         prev_num_moved_nodes = local_num_moved_nodes;
       }
@@ -184,6 +186,7 @@ public:
       if (iteration == _max_num_iterations - 1) {
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, recv_buffers, requests);
         MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+        requests.clear();
         handle_labels(last_from, last_to, recv_buffers, size, global_num_moved_nodes);
       }
 
