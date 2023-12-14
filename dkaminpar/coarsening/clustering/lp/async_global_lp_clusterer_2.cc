@@ -202,8 +202,8 @@ public:
       if (global_num_moved_nodes == 0 && local_num_moved_nodes == 0) {
         break;
       }
-      LOG << "level done";
     }
+    LOG << "level done";
     return clusters();
   }
 
