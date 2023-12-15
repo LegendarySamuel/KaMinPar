@@ -254,7 +254,7 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
 }
 
 template <typename Message, typename Buffer, typename SendBuffers, typename RecvBuffers, typename Requests>
-void sparse_alltoall_ialltoallv_clustering(SendBuffers &&send_buffers, RecvBuffers &recv_buffers, Requests &requests, MPI_Comm comm) {
+void sparse_alltoall_ialltoallv_clustering(SendBuffers &send_buffers, RecvBuffers &recv_buffers, Requests &requests, MPI_Comm comm) {
   // Note: copies data twice which could be avoided
   using namespace internal;
 
@@ -264,19 +264,14 @@ void sparse_alltoall_ialltoallv_clustering(SendBuffers &&send_buffers, RecvBuffe
 
   std::vector<int> send_counts(size);
   std::vector<int> recv_counts(size);
-  std::vector<int> send_displs(size + 1);
-  std::vector<int> recv_displs(size + 1);
 
   // Exchange send counts
   for (PEID pe = 0; pe < size; ++pe) {
     send_counts[pe] = asserting_cast<int>(send_buffers[pe].size());
   }
-  parallel::prefix_sum(send_counts.begin(), send_counts.end(), send_displs.begin() + 1);
 
   mpi::barrier(comm);
   mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
-
-  parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
 
   // Call receiver
   tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
@@ -291,7 +286,6 @@ void sparse_alltoall_ialltoallv_clustering(SendBuffers &&send_buffers, RecvBuffe
     if (send_counts[pe] != 0) {
       MPI_Request request;
       MPI_Isend(send_buffers[pe].data(), send_counts[pe], type::get<Message>(), pe, 0, comm, &request);
-      requests.push_back(request);
     }
     if (recv_counts[pe] != 0) {
       MPI_Request request;

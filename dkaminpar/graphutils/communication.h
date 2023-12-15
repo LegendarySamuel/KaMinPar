@@ -603,6 +603,7 @@ void sparse_alltoall_interface_to_pe(
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,
+    typename SendBuffers = std::vector<Buffer>,
     typename RecvBuffers = std::vector<Buffer>,
     typename Requests = std::vector<MPI_Request>,
     typename Mapper,
@@ -615,6 +616,7 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
     Mapper &&mapper,
     Filter &&filter,
     Builder &&builder,
+    SendBuffers &send_buffers,
     RecvBuffers &recv_buffers,
     Requests &requests
 ) {
@@ -688,7 +690,6 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
   internal::inclusive_col_prefix_sum(num_messages);
 
   // Allocate send buffers
-  std::vector<Buffer> send_buffers(size);
   tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {
     send_buffers[pe].resize(num_messages.back()[pe]);
   });
@@ -746,7 +747,7 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
       std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
   );*/
   sparse_alltoall_ialltoallv_clustering<Message, Buffer>(
-      std::move(send_buffers), recv_buffers, requests, graph.communicator()
+      send_buffers, recv_buffers, requests, graph.communicator()
   );
 } // namespace dkaminpar::mpi::graph
 
@@ -754,6 +755,7 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
 template <
     typename Message,
     typename Buffer = NoinitVector<Message>,
+    typename SendBuffers = std::vector<Buffer>,
     typename RecvBuffers = std::vector<Buffer>,
     typename Requests = std::vector<MPI_Request>,
     typename Filter,
@@ -764,6 +766,7 @@ void sparse_alltoall_interface_to_pe_clustering(
     const NodeID to,
     Filter &&filter,
     Builder &&builder,
+    SendBuffers &send_buffers,
     RecvBuffers &recv_buffers,
     Requests &requests
 ) {
@@ -774,6 +777,7 @@ void sparse_alltoall_interface_to_pe_clustering(
       [](const NodeID u) { return u; },
       std::forward<Filter>(filter),
       std::forward<Builder>(builder),
+      send_buffers,
       recv_buffers,
       requests
   );
