@@ -18,6 +18,7 @@
 #include "common/math.h"
 
 #include <tbb/concurrent_queue.h>
+#include <tbb/parallel_for.h>
 
 namespace kaminpar::dist {
 namespace {
@@ -123,6 +124,9 @@ public:
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
+
+    // outputting the current total cut
+    LOG << "Current Cut = " << graph.global_total_edge_weight();
 
     mpi::barrier(graph.communicator());
 
