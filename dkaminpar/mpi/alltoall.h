@@ -178,12 +178,7 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   // Note: copies data twice which could be avoided
   using namespace internal;
 
-  double mpi_time_start = MPI_Wtime();
   const auto [size, rank] = mpi::get_comm_info(comm);
-  double mpi_time_end = MPI_Wtime();
-  std::stringstream mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   START_TIMER("Alltoall construction");
 
@@ -197,12 +192,8 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
     send_counts[pe] = asserting_cast<int>(send_buffers[pe].size());
   }
   parallel::prefix_sum(send_counts.begin(), send_counts.end(), send_displs.begin() + 1);
-  mpi_time_start = MPI_Wtime();
+  mpi::barrier(comm);
   mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
-  mpi_time_end = MPI_Wtime();
-  mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
 
@@ -226,7 +217,7 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   STOP_TIMER();
   START_TIMER("Alltoall MPI");
 
-  mpi_time_start = MPI_Wtime();
+  mpi::barrier(comm);
   mpi::alltoallv(
       common_send_buffer.data(),
       send_counts.data(),
@@ -236,10 +227,6 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
       recv_displs.data(),
       comm
   );
-  mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
-  mpi_time_end = MPI_Wtime();
-  mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
 
   STOP_TIMER();
   START_TIMER("Alltoall construction");
@@ -278,12 +265,7 @@ void sparse_alltoall_complete_clustering(SendBuffers &&send_buffers, Receiver &&
       KASSERT(static_cast<std::size_t>(pe) < send_buffers.size());
       KASSERT(next_req_index < requests.size());
       
-      double mpi_time_start = MPI_Wtime();
       mpi::isend(send_buffers[pe], pe, 0, requests[next_req_index++], comm);
-      double mpi_time_end = MPI_Wtime();
-      std::stringstream mpi_time_output;
-      mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-      std::cout << mpi_time_output.str();
     }
   }
   KASSERT(next_req_index == requests.size());
@@ -296,12 +278,7 @@ void sparse_alltoall_complete_clustering(SendBuffers &&send_buffers, Receiver &&
       forward_self_buffer<decltype(send_buffers)>(send_buffers[rank], rank, receiver);
     } else if (pe != rank) {
       START_TIMER("probe_recv");
-      double mpi_time_start = MPI_Wtime();
       auto recv_buffer = mpi::probe_recv<Message, Buffer>(pe, 0, comm, MPI_STATUS_IGNORE);
-      double mpi_time_end = MPI_Wtime();
-      std::stringstream mpi_time_output;
-      mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-      std::cout << mpi_time_output.str();
       STOP_TIMER();
       START_TIMER("invoke_receiver");
       invoke_receiver(std::move(recv_buffer), pe, receiver);
@@ -310,12 +287,7 @@ void sparse_alltoall_complete_clustering(SendBuffers &&send_buffers, Receiver &&
   }
 
   if (size > 1) {
-    double mpi_time_start = MPI_Wtime();
     mpi::waitall(requests);
-    double mpi_time_end = MPI_Wtime();
-    std::stringstream mpi_time_output;
-    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-    std::cout << mpi_time_output.str();
   }
 
   STOP_TIMER();

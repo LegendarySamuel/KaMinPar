@@ -423,13 +423,8 @@ void sparse_alltoall_grid_clustering(
   const PEID row_comm_size = grid_comm.row_comm_size();
   const PEID col_comm_size = grid_comm.col_comm_size();
 
-  double mpi_time_start = MPI_Wtime();
   const PEID size = mpi::get_comm_size(comm);
   const PEID rank = mpi::get_comm_rank(comm);
-  double mpi_time_end = MPI_Wtime();
-  std::stringstream mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   const GridTopology topo(size);
   const PEID my_row = topo.row(rank);
@@ -490,7 +485,6 @@ void sparse_alltoall_grid_clustering(
   STOP_TIMER();
   START_TIMER("Alltoall MPI");
 
-  mpi_time_start = MPI_Wtime();
   mpi::alltoallv(
       counts.data(),
       row_counts_send_counts.data(),
@@ -500,10 +494,6 @@ void sparse_alltoall_grid_clustering(
       row_counts_recv_displs.data(),
       col_comm
   );
-  mpi_time_end = MPI_Wtime();
-  mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   STOP_TIMER();
   START_TIMER("Alltoall construction");
@@ -558,7 +548,6 @@ void sparse_alltoall_grid_clustering(
   STOP_TIMER();
   START_TIMER("Alltoall MPI");
 
-  mpi_time_start = MPI_Wtime();
   mpi::alltoallv(
       data.data(),
       row_send_counts.data(),
@@ -568,10 +557,6 @@ void sparse_alltoall_grid_clustering(
       row_recv_displs.data(),
       col_comm
   );
-  mpi_time_end = MPI_Wtime();
-  mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   STOP_TIMER();
   START_TIMER("Alltoall construction");
@@ -656,7 +641,6 @@ void sparse_alltoall_grid_clustering(
   STOP_TIMER();
   START_TIMER("Alltoall MPI");
 
-  mpi_time_start = MPI_Wtime();
   mpi::alltoallv(
       col_subcounts.data(),
       col_subcounts_send_counts.data(),
@@ -666,10 +650,6 @@ void sparse_alltoall_grid_clustering(
       col_subcounts_recv_displs.data(),
       row_comm
   );
-  mpi_time_end = MPI_Wtime();
-  mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   STOP_TIMER();
   START_TIMER("Alltoall construction");
@@ -732,7 +712,6 @@ void sparse_alltoall_grid_clustering(
   STOP_TIMER();
   START_TIMER("Alltoall MPI");
 
-  mpi_time_start = MPI_Wtime();
   mpi::alltoallv(
       col_data.data(),
       col_counts.data(),
@@ -742,10 +721,6 @@ void sparse_alltoall_grid_clustering(
       col_recv_displs.data(),
       row_comm
   );
-  mpi_time_end = MPI_Wtime();
-  mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
 
   STOP_TIMER();
 
@@ -786,12 +761,7 @@ template <typename Message, typename Buffer, typename SendBuffers, typename Rece
 void sparse_alltoall_grid_clustering(SendBuffers &&send_buffers, Receiver &&receiver, MPI_Comm comm) {
   START_TIMER("Alltoall construction");
 
-  double mpi_time_start = MPI_Wtime();
   const auto [size, rank] = mpi::get_comm_info(comm);
-  double mpi_time_end = MPI_Wtime();
-  std::stringstream mpi_time_output;
-  mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-  std::cout << mpi_time_output.str();
   NoinitVector<int> counts(size);
 
   tbb::parallel_for<PEID>(0, size, [&](const PEID pe) {

@@ -737,7 +737,7 @@ void sparse_alltoall_interface_to_pe_custom_range_clustering(
   }
 
   STOP_TIMER();
-  sparse_alltoall_clustering<Message, Buffer>(
+  sparse_alltoall_alltoallv_clustering<Message, Buffer>(
       std::move(send_buffers), std::forward<Receiver>(receiver), graph.communicator()
   );
 } // namespace dkaminpar::mpi::graph

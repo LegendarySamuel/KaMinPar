@@ -125,6 +125,9 @@ public:
 
     mpi::barrier(graph.communicator());
 
+    // outputting the current total cut
+    LOG << "Current Cut = " << graph.global_total_edge_weight();
+
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
 
     SCOPED_TIMER("Compute label propagation clustering");

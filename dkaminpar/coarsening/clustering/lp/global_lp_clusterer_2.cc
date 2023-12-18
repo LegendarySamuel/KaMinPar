@@ -127,6 +127,9 @@ public:
 
     mpi::barrier(graph.communicator());
 
+    // outputting the current total cut
+    LOG << "Current Cut = " << graph.global_total_edge_weight();
+
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
 
     SCOPED_TIMER("Compute label propagation clustering");
@@ -579,12 +582,9 @@ private:
   // no mpi communication
   NodeID process_chunk_computation(const NodeID from, const NodeID to) {
     START_TIMER("Chunk computation");
-    double start_time = MPI_Wtime();
+
     const NodeID local_num_moved_nodes = perform_iteration(from, to);
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk computation: " << end_time - start_time << std::endl;
-    std::cout << output.str();
+
     STOP_TIMER();
 
     if (_c_ctx.global_lp.merge_singleton_clusters) {
@@ -600,12 +600,10 @@ private:
   template <typename Message>
   void communicate_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers) {
 
-    double start_time = MPI_Wtime();
-
     mpi::barrier(_graph->communicator());
 
     // performing sparse all to all communication and writing into msgBuffer
-    mpi::graph::sparse_alltoall_interface_to_pe_clustering<Message>(
+    mpi::graph::sparse_alltoall_interface_to_pe<Message>(
         *_graph,
         from,
         to,
@@ -617,12 +615,6 @@ private:
           msgBuffers[owner] = std::move(buffer);
         }
     );
-
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk communication: " << end_time - start_time << std::endl;
-    std::cout << output.str();
-
   }
 
   /** // TODO
@@ -631,18 +623,10 @@ private:
   template <typename Message>
   GlobalNodeID handle_labels(const int from, const int to, const NodeID local_num_moved_nodes, std::vector<NoinitVector<Message>> &msgBuffers, const int size) {
 
-    double start_time = MPI_Wtime();
-    double mpi_time_start = MPI_Wtime();
-
     mpi::barrier(_graph->communicator());
 
     const GlobalNodeID global_num_moved_nodes =
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
-
-    double mpi_time_end = MPI_Wtime();
-    std::stringstream mpi_time_output;
-    mpi_time_output << "MPI Communication: " << mpi_time_end - mpi_time_start << std::endl;
-    std::cout << mpi_time_output.str();
 
     control_cluster_weights(from, to);
 
@@ -696,11 +680,7 @@ private:
     _graph->pfor_nodes(from, to, [&](const NodeID lnode) {
       _changed_label[lnode] = kInvalidGlobalNodeID;
     });
-    
-    double end_time = MPI_Wtime();
-    std::stringstream output;
-    output << "Single chunk communication: " << end_time - start_time << std::endl;
-    std::cout << output.str();
+
     return global_num_moved_nodes;
   }
 
