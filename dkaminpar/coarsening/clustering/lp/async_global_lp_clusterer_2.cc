@@ -195,6 +195,8 @@ public:
       }
     }
 
+    START_TIMER("Cut Computation");
+
     GlobalEdgeWeight localWeight = 0;
     graph.pfor_nodes([&](const NodeID u){
       std::vector<std::pair<EdgeID, NodeID>> buf;
@@ -207,6 +209,8 @@ public:
 
     GlobalEdgeWeight totalWeight = mpi::allreduce(static_cast<GlobalEdgeWeight>(localWeight), MPI_SUM, graph.communicator());
     LOG << "Current Cut After = " << totalWeight;
+
+    STOP_TIMER();
 
     return clusters();
   }
