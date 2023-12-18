@@ -124,7 +124,7 @@ public:
     _max_cluster_weight = max_cluster_weight;
 
     // outputting the current total cut
-    LOG << "Current Cut = " << graph.global_total_edge_weight();
+    LOG << "Current Cut Before = " << graph.global_total_edge_weight() / 2;
 
     mpi::barrier(graph.communicator());
 
@@ -145,7 +145,32 @@ public:
       }
     }
 
+    GlobalEdgeWeight localWeight = 0;
+    graph.pfor_nodes([&](const NodeID u){
+      std::vector<std::pair<EdgeID, NodeID>> buf;
+      for (auto&& [edge, target] : neighbors_in_other_clusters(graph, u, std::move(buf))) {
+        if (graph.local_to_global_node(u) < graph.local_to_global_node(target)) {
+          localWeight += graph.edge_weight(edge);
+        }
+      }
+    });
+
+    GlobalEdgeWeight totalWeight = mpi::allreduce(static_cast<GlobalEdgeWeight>(localWeight), MPI_SUM, graph.communicator());
+    LOG << "Current Cut After = " << totalWeight;
+
     return clusters();
+  }
+
+  std::vector<std::pair<EdgeID, NodeID>>&& neighbors_in_other_clusters(const DistributedGraph &graph, const NodeID u, std::vector<std::pair<EdgeID, NodeID>> &&buffer) {
+    ClusterID my_cluster = cluster(u);
+
+    for (auto&& neighbor : graph.neighbors(u)) {
+      if (cluster(neighbor.second) != my_cluster) {
+        buffer.push_back(neighbor);
+      }
+    }
+
+    return std::move(buffer);
   }
 
   void set_max_num_iterations(const int max_num_iterations) {
