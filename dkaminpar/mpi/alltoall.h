@@ -191,7 +191,12 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
     send_counts[pe] = asserting_cast<int>(send_buffers[pe].size());
   }
   parallel::prefix_sum(send_counts.begin(), send_counts.end(), send_displs.begin() + 1);
+
+  mpi::barrier(comm);
+
+  START_TIMER("Alltoall/Alltoallv MPI");
   mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
+  STOP_TIMER();
 
   parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
 
@@ -213,7 +218,10 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   Buffer common_recv_buffer(recv_displs.back() + recv_counts.back());
 
   STOP_TIMER();
-  START_TIMER("Alltoall MPI");
+
+  mpi::barrier(comm);
+
+  START_TIMER("Alltoall/Alltoallv MPI");
 
   mpi::alltoallv(
       common_send_buffer.data(),

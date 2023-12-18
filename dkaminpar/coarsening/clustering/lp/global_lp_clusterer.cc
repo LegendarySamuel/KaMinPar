@@ -123,6 +123,9 @@ public:
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
 
+    // outputting the current total cut
+    LOG << "Current Cut = " << graph.global_total_edge_weight();
+
     mpi::barrier(graph.communicator());
 
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
