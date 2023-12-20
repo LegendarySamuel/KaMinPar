@@ -226,13 +226,11 @@ Context create_default_context() {
           .save_coarsest_partition = false,
       },
       .msg_q_context = { // TODO
-          .global_threshold = 0,
-          .local_threshold = 0,
+          .global_threshold = std::numeric_limits<size_t>::max(),
           .dynamic_threshold = true,
-          .message_handle_threshold = 0,
-          .weights_global_threshold = 0,
-          .weights_local_threshold = 0,
-          .weights_handle_threshold = 0,
+          .message_handle_threshold = 200,
+          .weights_global_threshold = std::numeric_limits<size_t>::max(),
+          .weights_handle_threshold = 200,
           .lock_then_retry = true,
           .indirection = true,
       }};

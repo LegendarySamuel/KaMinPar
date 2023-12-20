@@ -680,10 +680,6 @@ CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
       ->add_option("--mq-global-threshold", ctx.msg_q_context.global_threshold, "Global Message Queue buffer threshold at which the buffer is flushed.")
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
-  message_queue
-      ->add_option("--mq-local-threshold", ctx.msg_q_context.local_threshold, "Local Message Queue buffer threshold at which the buffer is flushed.")
-      ->check(CLI::NonNegativeNumber)
-      ->capture_default_str();
     message_queue
       ->add_flag("--mq-dynamic-threshold", ctx.msg_q_context.dynamic_threshold, "Set whether the Label Message Queue should use dynamically computed buffer sizes.")->capture_default_str();
   message_queue
@@ -692,10 +688,6 @@ CLI::Option_group *create_message_queue_options(CLI::App *app, Context &ctx) {
       ->capture_default_str();
   message_queue
       ->add_option("--mq-weights-global-threshold", ctx.msg_q_context.weights_global_threshold, "Global Message Queue buffer threshold at which the weights buffer is flushed.")
-      ->check(CLI::NonNegativeNumber)
-      ->capture_default_str();
-  message_queue
-      ->add_option("--mq-weights-local-threshold", ctx.msg_q_context.weights_local_threshold, "Local Message Queue buffer threshold at which the weights buffer is flushed.")
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
   message_queue

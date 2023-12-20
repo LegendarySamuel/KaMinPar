@@ -290,12 +290,10 @@ public:
     // dynamically calculated threshold sizes (similar to chunksize)
     // now half of original value
     if (_ctx.msg_q_context.dynamic_threshold) {
-      auto [l_threshold, g_threshold] = compute_label_MQ_buffer_size();
+      auto g_threshold = compute_label_MQ_buffer_size();
       _queue.global_threshold(g_threshold / 2);
-      _queue.local_threshold(l_threshold / 2);
     } else {
       _queue.global_threshold(_ctx.msg_q_context.global_threshold);
-      _queue.local_threshold(_ctx.msg_q_context.local_threshold);
     }
 
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
@@ -304,7 +302,7 @@ public:
   /**
    * Compute the label MQ buffer size dynamically
   */
-  std::pair<size_t, size_t> compute_label_MQ_buffer_size() {
+  size_t compute_label_MQ_buffer_size() {
     int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
     size_t l_threshold;
     NodeID num_nodes = _graph->n();
@@ -314,7 +312,7 @@ public:
       l_threshold = (num_nodes / num_chunks) + 1;
     }
     size_t g_threshold = mpi::get_comm_size(_graph->communicator()) * l_threshold;
-    return std::make_pair(l_threshold, g_threshold);
+    return g_threshold;
   }
 
   /**
@@ -325,7 +323,6 @@ public:
     _w_queue = message_queue::make_buffered_queue<WeightsMessage, uint64_t>(_w_comm, WeightsMerger{}, WeightsSplitter{});
 
     _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
-    _w_queue.local_threshold(_ctx.msg_q_context.weights_local_threshold);
 
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
   }
