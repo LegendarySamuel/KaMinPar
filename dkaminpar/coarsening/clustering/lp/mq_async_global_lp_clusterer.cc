@@ -287,10 +287,32 @@ public:
     // message queue
     _queue = message_queue::make_buffered_queue<LabelMessage, uint64_t>(graph.communicator(), LabelMerger{}, LabelSplitter{});
     
-    _queue.global_threshold(_ctx.msg_q_context.global_threshold);
-    _queue.local_threshold(_ctx.msg_q_context.local_threshold);
+    // dynamically calculated threshold sizes (similar to chunksize)
+    // now half of original value
+    if (_ctx.msg_q_context.dynamic_threshold) {
+      auto g_threshold = compute_label_MQ_buffer_size();
+      _queue.global_threshold(g_threshold / 2);
+    } else {
+      _queue.global_threshold(_ctx.msg_q_context.global_threshold);
+    }
 
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
+  }
+
+  /**
+   * Compute the label MQ buffer size dynamically
+  */
+  size_t compute_label_MQ_buffer_size() {
+    int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
+    size_t l_threshold;
+    NodeID num_nodes = _graph->n();
+    if (num_nodes % num_chunks == 0) {
+      l_threshold = num_nodes / num_chunks;
+    } else {
+      l_threshold = (num_nodes / num_chunks) + 1;
+    }
+    size_t g_threshold = mpi::get_comm_size(_graph->communicator()) * l_threshold;
+    return g_threshold;
   }
 
   /**
@@ -301,7 +323,6 @@ public:
     _w_queue = message_queue::make_buffered_queue<WeightsMessage, uint64_t>(_w_comm, WeightsMerger{}, WeightsSplitter{});
 
     _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
-    _w_queue.local_threshold(_ctx.msg_q_context.weights_local_threshold);
 
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
   }
@@ -321,6 +342,9 @@ public:
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
+
+    // outputting the current total cut
+    LOG << "Current Cut Before = " << graph.global_total_edge_weight() / 2;
 
     mpi::barrier(graph.communicator());
 
@@ -419,7 +443,36 @@ public:
     // free unused communicator
     MPI_Comm_free(&_w_comm);
 
+    START_TIMER("Cut Computation");
+
+    GlobalEdgeWeight localWeight = 0;
+    graph.pfor_nodes([&](const NodeID u){
+      std::vector<std::pair<EdgeID, NodeID>> buf;
+      for (auto&& [edge, target] : neighbors_in_other_clusters(graph, u, std::move(buf))) {
+        if (graph.local_to_global_node(u) < graph.local_to_global_node(target)) {
+          localWeight += graph.edge_weight(edge);
+        }
+      }
+    });
+
+    GlobalEdgeWeight totalWeight = mpi::allreduce(static_cast<GlobalEdgeWeight>(localWeight), MPI_SUM, graph.communicator());
+    LOG << "Current Cut After = " << totalWeight;
+
+    STOP_TIMER();
+
     return clusters();
+  }
+
+  std::vector<std::pair<EdgeID, NodeID>>&& neighbors_in_other_clusters(const DistributedGraph &graph, const NodeID u, std::vector<std::pair<EdgeID, NodeID>> &&buffer) {
+    ClusterID my_cluster = cluster(u);
+
+    for (auto&& neighbor : graph.neighbors(u)) {
+      if (cluster(neighbor.second) != my_cluster) {
+        buffer.push_back(neighbor);
+      }
+    }
+
+    return std::move(buffer);
   }
 
   void set_max_num_iterations(const int max_num_iterations) {
