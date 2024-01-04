@@ -121,8 +121,8 @@ public:
   }
 
   void copy_weight_deltas() {
-    _weight_delta_handles_ets_copy.clear();
-    _weight_deltas_copy = std::move(_weight_deltas);
+    _prev_weight_delta_handles_ets.clear();
+    _prev_weight_deltas = std::move(_weight_deltas);
     
     _weight_delta_handles_ets.clear();
     _weight_deltas = WeightDeltaMap{0};
@@ -698,7 +698,7 @@ private:
       
       PEID owner = i;
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
-        auto &weight_delta_handle = _weight_delta_handles_ets_copy.local();
+        auto &weight_delta_handle = _prev_weight_delta_handles_ets.local();
 
 
         // iterate for each interface node, that has received an update
@@ -825,9 +825,9 @@ private:
     return _weight_deltas.get_handle();
   }};
 
-  WeightDeltaMap _weight_deltas_copy{0};
-  tbb::enumerable_thread_specific<WeightDeltaMap::handle_type> _weight_delta_handles_ets_copy{[this] {
-    return _weight_deltas_copy.get_handle();
+  WeightDeltaMap _prev_weight_deltas{0};
+  tbb::enumerable_thread_specific<WeightDeltaMap::handle_type> _prev_weight_delta_handles_ets{[this] {
+    return _prev_weight_deltas.get_handle();
   }};
 };
 
