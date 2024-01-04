@@ -120,6 +120,14 @@ public:
     STOP_TIMER();
   }
 
+  void copy_weight_deltas() {
+    _weight_delta_handles_ets_copy.clear();
+    _weight_deltas_copy = std::move(_weight_deltas);
+    
+    _weight_delta_handles_ets.clear();
+    _weight_deltas = WeightDeltaMap{0};
+  }
+
   auto &
   compute_clustering(const DistributedGraph &graph, const GlobalNodeWeight max_cluster_weight) {
     _max_cluster_weight = max_cluster_weight;
@@ -161,6 +169,10 @@ public:
       if (!has_iterated) {
         // first chunk's computation
         prev_num_moved_nodes = process_chunk_computation(from, to);
+        control_cluster_weights(from, to);
+        if (should_sync_cluster_weights()) {
+          copy_weight_deltas();
+        }
         has_iterated = true;
       } else {
         // previous iteration's last chunk's communication and first chunk computation of current iteration
@@ -169,7 +181,13 @@ public:
                                 });
         global_num_moved_nodes += communicate_labels(last_from, last_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
+        if (should_sync_cluster_weights()) {
+          control_cluster_weights(from, to);
+        }
         handle_labels(last_from, last_to, buffers, size, global_num_moved_nodes);
+        if (should_sync_cluster_weights()) {
+          copy_weight_deltas();
+        }
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // loop starts with first communication and second computation
@@ -181,7 +199,13 @@ public:
                                 });
         global_num_moved_nodes += communicate_labels(prev_from, prev_to, prev_num_moved_nodes, buffers);
         comp_thread.join();
+        if (should_sync_cluster_weights()) {
+          control_cluster_weights(from, to);
+        }
         handle_labels(prev_from, prev_to, buffers, size, global_num_moved_nodes);
+        if (should_sync_cluster_weights()) {
+          copy_weight_deltas();
+        }
         prev_num_moved_nodes = local_num_moved_nodes;
       }
       // last chunk's communication
@@ -661,8 +685,6 @@ private:
   template <typename Message>
   void handle_labels(const int from, const int to, std::vector<NoinitVector<Message>> &msgBuffers, const int size, const int global_num_moved_nodes) {
 
-    control_cluster_weights(from, to);
-
     if (global_num_moved_nodes <= 0) {
       return;
     }
@@ -676,7 +698,8 @@ private:
       
       PEID owner = i;
       tbb::parallel_for(tbb::blocked_range<std::size_t>(0, buffer.size()), [&](const auto &r) {
-        auto &weight_delta_handle = _weight_delta_handles_ets.local();
+        auto &weight_delta_handle = _weight_delta_handles_ets_copy.local();
+
 
         // iterate for each interface node, that has received an update
         for (std::size_t j = r.begin(); j != r.end(); ++j) {
@@ -800,6 +823,11 @@ private:
   WeightDeltaMap _weight_deltas{0};
   tbb::enumerable_thread_specific<WeightDeltaMap::handle_type> _weight_delta_handles_ets{[this] {
     return _weight_deltas.get_handle();
+  }};
+
+  WeightDeltaMap _weight_deltas_copy{0};
+  tbb::enumerable_thread_specific<WeightDeltaMap::handle_type> _weight_delta_handles_ets_copy{[this] {
+    return _weight_deltas_copy.get_handle();
   }};
 };
 
