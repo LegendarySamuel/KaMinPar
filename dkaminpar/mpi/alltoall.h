@@ -196,6 +196,7 @@ void sparse_alltoall_alltoallv_clustering(SendBuffers &&send_buffers, Receiver &
   parallel::prefix_sum(send_counts.begin(), send_counts.end(), send_displs.begin() + 1);
   mpi::barrier(comm);
   mpi::alltoall(send_counts.data(), 1, recv_counts.data(), 1, comm);
+  STOP_TIMER();
 
   parallel::prefix_sum(recv_counts.begin(), recv_counts.end(), recv_displs.begin() + 1);
 
