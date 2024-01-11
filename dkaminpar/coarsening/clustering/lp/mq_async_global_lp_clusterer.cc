@@ -90,6 +90,7 @@ struct LabelMerger {
           PEID buffer_destination,
           PEID my_rank,
           message_queue::Envelope auto envelope) const {
+  //LOG << "LabelMerger";
     if (!buffer.empty()) {
           buffer.emplace_back(-1);  // sentinel
       }
@@ -115,6 +116,7 @@ static_assert(message_queue::aggregation::EstimatingMerger<LabelMerger, LabelMes
 */
 struct LabelSplitter {
     decltype(auto) operator()(message_queue::MPIBuffer<uint64_t> auto const& buffer, PEID buffer_origin, PEID my_rank) const {
+  //LOG << "LabelSplitter";
       return buffer | std::ranges::views::split(-1)
                     | std::ranges::views::transform([](auto&& chunk) {
                   auto send_recv = chunk[0];
@@ -141,6 +143,7 @@ struct WeightsMerger {
           PEID buffer_destination,
           PEID my_rank,
           message_queue::Envelope auto envelope) const {
+  LOG << "WeightsMerger";
     if (!buffer.empty()) {
           buffer.emplace_back(-1);  // sentinel
       }
@@ -166,6 +169,7 @@ static_assert(message_queue::aggregation::EstimatingMerger<WeightsMerger, Weight
 */
 struct WeightsSplitter {
   auto operator()(std::vector<uint64_t> const& buffer, PEID buffer_origin, PEID my_rank) const {
+  LOG << "WeightsSplitter";
     std::vector<message_queue::MessageEnvelope<std::vector<WeightsMessage>>> split_range;
     auto it = buffer.begin();
     size_t counter = 0;
@@ -427,7 +431,9 @@ public:
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
 
       if (_c_ctx.global_lp.merge_singleton_clusters) {
+        LOG << "is it really here?";
         cluster_isolated_nodes(0, graph.n());
+        LOG << "end is it really here";
       }
 
       // if nothing changed during the iteration, end clustering
@@ -526,6 +532,7 @@ public:
 
   ClusterWeight cluster_weight(const ClusterID gcluster) {
     if (_graph->is_owned_global_node(gcluster)) {
+      LOG << "local";
       const NodeID lcluster = _graph->global_to_local_node(gcluster);
       return __atomic_load_n(&_local_cluster_weights[lcluster], __ATOMIC_RELAXED);
     } else {
@@ -533,6 +540,7 @@ public:
       auto it = handle.find(gcluster);
       // TODO
       KASSERT(it != handle.end(), "read weight of uninitialized cluster: " << gcluster);
+      LOG << "after assertion";
       return (*it).second;
     }
   }
@@ -545,9 +553,11 @@ public:
       const bool check_weight_constraint = true
   ) {
     // Reject move if it violates local weight constraint
+    LOG << "here?:";
     if (check_weight_constraint && cluster_weight(new_gcluster) + weight_delta > max_weight) {
       return false;
     }
+    LOG << "end here?:";
 
     auto &handle = _unowned_clusters_local_weight;
 
@@ -838,9 +848,11 @@ private:
             // apply weight change
             change_cluster_weight(cluster, delta, false);
             // if cluster is now too heavy, send cluster-lock
+            LOG << "probably not here:";
             if (cluster_weight(cluster) >= _max_cluster_weight) {
               _w_queue.post_message({ .flag = 2, .clusterID = cluster, .delta = 0 }, envelope.sender);
             }
+            LOG << "end probably not here";
           } else {
             // case: cluster is not owned -> need to redirect
             _w_queue.post_message(std::move(envelope.message), envelope.receiver, envelope.sender, envelope.receiver, 0);
@@ -973,6 +985,9 @@ private:
       for (size_t i = 0; i < in_msgs[pe].size(); ++i) {
         const auto [cluster, delta] = in_msgs[pe][i];
         GlobalNodeWeight pe_remote_weight = delta;
+        //if () {
+LOG << "maybe here";
+        //}
         const GlobalNodeWeight total_weight = cluster_weight(cluster);
         auto it = new_cluster_weight.find(cluster);
         if (it == new_cluster_weight.end()) {
@@ -1004,9 +1019,11 @@ private:
     // modifying owned cluster weight with the changes on remote PEs
     for (const auto [cluster, weight_to_remove] : new_cluster_weight) {
       change_cluster_weight(cluster, weight_to_remove, true);
+      LOG << "probably not here 2:";
       if (cluster_weight(cluster) < _max_cluster_weight && is_cluster_locked(graph, cluster)) {
         unlock_cluster(graph, cluster);
       }
+      LOG << "end probably not htere 2:";
     }
     STOP_TIMER();
 
@@ -1020,9 +1037,11 @@ private:
       for (size_t i = 0; i < in_resps[pe].size(); ++i) {
         const auto [cluster, delta] = in_resps[pe][i];
         change_cluster_weight(cluster, delta, true);
+        LOG << "probably not here 3:";
         if (cluster_weight(cluster) > _max_cluster_weight && !is_cluster_locked(graph, cluster)) {
           lock_cluster(graph, cluster);
         }
+        LOG << "end probably not here 3:";
       }
     }
 
@@ -1038,13 +1057,17 @@ private:
       }
 
       const GlobalNodeID new_label = cluster(u);
+      LOG << "could be here:";
       const GlobalNodeWeight new_label_weight = cluster_weight(new_label);
+      LOG << "end could be here";
       if (new_label_weight > _max_cluster_weight) {
         move_node(u, old_label);
         move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
+        LOG << "maybe:";
         if (cluster_weight(old_label) > _max_cluster_weight && !is_cluster_locked(graph, old_label)) {
           lock_cluster(graph, old_label);
         }
+        LOG << "end maybe";
       }
     });
     STOP_TIMER();
@@ -1115,12 +1138,15 @@ private:
       NodeID current = isolated_node_ets.local();
       ClusterID current_cluster =
           current == kInvalidNodeID ? kInvalidGlobalNodeID : cluster(current);
+      LOG << "cluster isolated 1";
       ClusterWeight current_weight =
           current == kInvalidNodeID ? kInvalidNodeWeight : cluster_weight(current_cluster);
       for (NodeID u = r.begin(); u != r.end(); ++u) {
         if (_graph->degree(u) == 0) {
           const auto u_cluster = cluster(u);
+          LOG << "cluster isolated 2";
           const auto u_weight = cluster_weight(u_cluster);
+          LOG << "end cluster isolated 2";
 
           if (current != kInvalidNodeID &&
               current_weight + u_weight <= max_cluster_weight(u_cluster)) {
