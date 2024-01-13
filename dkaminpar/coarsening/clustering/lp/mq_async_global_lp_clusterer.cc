@@ -258,27 +258,29 @@ public:
 
     START_TIMER("Datastructures");
     // Clear hash map
-    std::fill(_local_cluster_weights.begin(), _local_cluster_weights.end(), 0);
-
-    // TODO
-    if (should_sync_cluster_weights() && _ctx.msg_q_context.lock_then_retry && !map_keys_set) {
-      _global_locked_clusters.set_empty_key(std::numeric_limits<ClusterID>::max());
-      _global_locked_clusters.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
-      
-      std::fill(_local_locked_clusters.begin(), _local_locked_clusters.end(), 0);
-      
+    std::fill(_local_cluster_weights.begin(), _local_cluster_weights.end(), 0);      
+    std::fill(_local_locked_clusters.begin(), _local_locked_clusters.end(), 0);
+    if ( !map_keys_set) {
       _unowned_clusters_local_weight.set_empty_key(std::numeric_limits<ClusterID>::max());
       _unowned_clusters_local_weight.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
+      map_keys_set = 1;
+    }
+    _unowned_clusters_local_weight.clear_no_resize();
+
+    // TODO
+    if (should_sync_cluster_weights() && _ctx.msg_q_context.lock_then_retry && !weight_map_keys_set) {
+      _global_locked_clusters.set_empty_key(std::numeric_limits<ClusterID>::max());
+      _global_locked_clusters.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
+
 
       _weight_deltas.set_empty_key(std::numeric_limits<ClusterID>::max());
       _weight_deltas.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
 
-      map_keys_set = 1;
+      weight_map_keys_set = 1;
     }
 
     if (should_sync_cluster_weights() && _ctx.msg_q_context.lock_then_retry) {
       _global_locked_clusters.clear_no_resize();
-      _unowned_clusters_local_weight.clear_no_resize();
       _weight_deltas.clear_no_resize();
     }
 
@@ -308,6 +310,7 @@ public:
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
   }
 
+  // TODO could improve this
   /**
    * Compute the label MQ buffer size dynamically
   */
@@ -321,7 +324,9 @@ public:
       l_threshold = (num_nodes / num_chunks) + 1;
     }
     int size = mpi::get_comm_size(_graph->communicator());
-    size_t g_threshold = size * l_threshold / 2;
+    /*size_t g_threshold = size * l_threshold / 2;*/
+    size_t g_threshold = l_threshold / 2 + l_threshold % 2;
+    LOG << "local_num_nodes = " << num_nodes;
     size_t default_size = 80000;
     return std::min(g_threshold, default_size);
   }
@@ -330,18 +335,21 @@ public:
    *  Weights Message Queue sending WeightsMessage (cluster, weight_delta)
   */
   void make_weights_message_queue() {
+
+    if (!should_sync_cluster_weights()) {
+      return;
+    }
     
     _w_queue = message_queue::make_buffered_queue<WeightsMessage, uint64_t>(_w_comm, WeightsMerger{}, WeightsSplitter{});
 
     // dynamically calculated threshold sizes (similar to chunksize)
     // now half of original value
-    /*if (_ctx.msg_q_context.dynamic_threshold) {
+    if (_ctx.msg_q_context.dynamic_threshold) {
       auto g_threshold = compute_label_MQ_buffer_size();
       _w_queue.global_threshold(g_threshold / 2);
     } else {
       _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
-    }*/
-    _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
+    }
 
     _w_queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_w_queue)>{std::move(_w_queue)};
   }
@@ -353,8 +361,10 @@ public:
     // add indirection to label message queue
     _queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_queue)>{std::move(_queue)};
 
-    // add indirection to weights message queue
-    _w_queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_w_queue)>{std::move(_w_queue)};
+    if (should_sync_cluster_weights()) {
+      // add indirection to weights message queue
+      _w_queue = message_queue::IndirectionAdapter<message_queue::GridIndirectionScheme, decltype(_w_queue)>{std::move(_w_queue)};
+    }  
   }
 
   // TODO async
@@ -369,7 +379,11 @@ public:
 
     KASSERT(_graph == &graph, "must call initialize() before cluster()", assert::always);
 
-    MPI_Comm_dup(graph.communicator(), &_w_comm);
+    bool should_sync = should_sync_cluster_weights();
+
+    if (should_sync) {
+      MPI_Comm_dup(graph.communicator(), &_w_comm);
+    }
 
     // label queue
     make_label_message_queue(graph);
@@ -385,6 +399,7 @@ public:
 
     mpi::barrier(graph.communicator());
 
+    int step = 0;
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
 
       NodeID local_num_moved_nodes = 0;
@@ -394,7 +409,6 @@ public:
       std::size_t weights_msg_counter = 0;
       for (NodeID u = 0; u < graph.n(); ++u) {
         local_num_moved_nodes += process_node(u);
-
         // TODO
         // seprarate weights and message handling times
         if (weights_msg_counter < _ctx.msg_q_context.weights_handle_threshold) {
@@ -403,12 +417,11 @@ public:
           weights_msg_counter = 0;
           
           // posting weights messages here 
-          handle_cluster_weights(u);
-              
+          handle_cluster_weights();
+          
           // handle received messages
-          handle_weights_messages(*(_graph));
+          handle_weights_messages(*_graph);
         }
-        
         // if should handle messages now: handle messages
         if (label_msg_counter < _ctx.msg_q_context.message_handle_threshold) {
           ++label_msg_counter;
@@ -420,45 +433,45 @@ public:
           handle_messages();
         }
       }
-
       mpi::barrier(_graph->communicator());
-
       const GlobalNodeID global_num_moved_nodes = 
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
-
       if (_c_ctx.global_lp.merge_singleton_clusters) {
         cluster_isolated_nodes(0, graph.n());
       }
-
       // if nothing changed during the iteration, end clustering
       if (global_num_moved_nodes == 0) {
         break;
       }
       // terminate and reactivate queue
-      handle_cluster_weights(graph.n() - 1);
+      handle_cluster_weights();
       terminate_queue();
       terminate_weights_queue(graph);
-      _w_queue.reactivate();
+      reactivate_weights_queue();
       _queue.reactivate();
 
+      // find out whether anyone has had a violation and act accordingly
+      bool any_violation = mpi::allreduce(_violation, MPI_LOR, _graph->communicator());
+
       // cleanup: handle overweight clusters
-      if (should_enforce_cluster_weights() && _ctx.msg_q_context.lock_then_retry && _violation) {
+      if (any_violation) {
         fix_overweight_clusters(graph);
-        _violation = false;
       }
+      _violation = false;
 
       // resetting _changed_label array for the next iteration
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
     }
-    
     // terminate queues
     terminate_queue();
     terminate_weights_queue(graph);
 
-    // free unused communicator
-    MPI_Comm_free(&_w_comm);
+    if (should_sync) {
+      // free unused communicator
+      MPI_Comm_free(&_w_comm);
+    }
 
     START_TIMER("Cut Computation");
 
@@ -859,12 +872,25 @@ private:
 
   // handle weights messages
   bool handle_weights_messages(const DistributedGraph &graph) {
+    if (!should_sync_cluster_weights()) {
+      return false;
+    }
     return _w_queue.poll(get_weights_message_handler(graph));
   }
 
   // terminate weights queue; need to make changes
   bool terminate_weights_queue(const DistributedGraph &graph) {
+    if (!should_sync_cluster_weights()) {
+      return false;
+    }
     return _w_queue.terminate(get_weights_message_handler(graph));
+  }
+
+  void reactivate_weights_queue() {
+    if (!should_sync_cluster_weights()) {
+      return;
+    }
+    _w_queue.reactivate();
   }
 
   // TODO maybe just handle weight for every node separately (not necessary)
@@ -873,7 +899,7 @@ private:
    * this strategy probably does not get very good results if the update rate is too low
    * (since there may be more additions to full clusters before they get locked)
   */
-  void handle_cluster_weights(const NodeID u) {
+  void handle_cluster_weights() {
     SCOPED_TIMER("Synchronize cluster weights");
 
     if (!should_sync_cluster_weights() || !_ctx.msg_q_context.lock_then_retry) {
@@ -908,6 +934,10 @@ private:
    * used to fix overweight clusters
   */
   void fix_overweight_clusters(const DistributedGraph &graph) {
+
+    if (!should_enforce_cluster_weights()) {
+      return;
+    }
 
     SCOPED_TIMER("Handle Overweight Clusters");
 
@@ -1044,6 +1074,23 @@ private:
         move_cluster_weight(new_label, old_label, _graph->node_weight(u), 0, false);
         if (cluster_weight(old_label) > _max_cluster_weight && !is_cluster_locked(graph, old_label)) {
           lock_cluster(graph, old_label);
+        }
+        // put messages in send buffer, to alert adjacent PEs of reverted nodes
+        int pes;
+        MPI_Comm_size((*_graph).communicator(), &pes);
+        int added_for_pe[pes] {0};
+        for (const auto [e, v] : (*_graph).neighbors(u)) {
+          if (!(*_graph).is_ghost_node(v)) {
+            continue;
+          }
+          const PEID pe = (*_graph).ghost_owner(v);
+
+          if (added_for_pe[pe] == 1) {
+            continue;
+          }
+          LabelMessage message = { .owner_lnode = u, .new_gcluster = old_label };
+          _queue.post_message(message, pe);
+          added_for_pe[pe] = 1;
         }
       }
     });
@@ -1201,6 +1248,8 @@ private:
 
   // whether the sparse_hash datastructure keys have been set
   bool map_keys_set = 0;
+  // whether the keys of sparse_hash datastructures needed for weight handling have been set
+  bool weight_map_keys_set = 0;
 };
 
 //
