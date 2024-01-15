@@ -399,6 +399,8 @@ public:
 
     mpi::barrier(graph.communicator());
 
+    LOG << "start iteration";
+
     int step = 0;
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
 
@@ -408,6 +410,7 @@ public:
       std::size_t label_msg_counter = 0;
       std::size_t weights_msg_counter = 0;
       for (NodeID u = 0; u < graph.n(); ++u) {
+        LOG << "current step: " << iteration << "." << step;
         local_num_moved_nodes += process_node(u);
         // TODO
         // seprarate weights and message handling times
@@ -418,9 +421,11 @@ public:
           
           // posting weights messages here 
           handle_cluster_weights();
+          LOG << "posted weights messages";
           
           // handle received messages
           handle_weights_messages(*_graph);
+          LOG << "handled weights messages";
         }
         // if should handle messages now: handle messages
         if (label_msg_counter < _ctx.msg_q_context.message_handle_threshold) {
@@ -431,13 +436,16 @@ public:
 
           // handle received label messages
           handle_messages();
+          LOG << "handled messages";
         }
       }
+      LOG << "after message handling";
       mpi::barrier(_graph->communicator());
       const GlobalNodeID global_num_moved_nodes = 
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
       if (_c_ctx.global_lp.merge_singleton_clusters) {
         cluster_isolated_nodes(0, graph.n());
+        LOG << "after cluster isolated nodes";
       }
       // if nothing changed during the iteration, end clustering
       if (global_num_moved_nodes == 0) {
@@ -449,6 +457,7 @@ public:
       terminate_weights_queue(graph);
       reactivate_weights_queue();
       _queue.reactivate();
+      LOG << "after queue reactivation";
 
       // find out whether anyone has had a violation and act accordingly
       bool any_violation = mpi::allreduce(_violation, MPI_LOR, _graph->communicator());
@@ -457,6 +466,7 @@ public:
       if (any_violation) {
         fix_overweight_clusters(graph);
       }
+      LOG << "after fix overweight clusters";
       _violation = false;
 
       // resetting _changed_label array for the next iteration
@@ -464,6 +474,7 @@ public:
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
     }
+    LOG << "after iteration";
     // terminate queues
     terminate_queue();
     terminate_weights_queue(graph);
