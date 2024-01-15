@@ -410,7 +410,7 @@ public:
       std::size_t label_msg_counter = 0;
       std::size_t weights_msg_counter = 0;
       for (NodeID u = 0; u < graph.n(); ++u) {
-        LOG << "current step: " << iteration << "." << step;
+        LOG << "current step: " << iteration << "." << ++step;
         local_num_moved_nodes += process_node(u);
         // TODO
         // seprarate weights and message handling times
@@ -449,12 +449,17 @@ public:
       }
       // if nothing changed during the iteration, end clustering
       if (global_num_moved_nodes == 0) {
+        LOG << "break since nothing changed";
         break;
       }
       // terminate and reactivate queue
+      LOG << "handle cluster weights";
       handle_cluster_weights();
+      LOG << "terminate queue";
       terminate_queue();
+      LOG << "terminate weight queue";
       terminate_weights_queue(graph);
+      LOG << "reacivate queues";
       reactivate_weights_queue();
       _queue.reactivate();
       LOG << "after queue reactivation";
