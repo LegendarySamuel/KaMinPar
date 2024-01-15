@@ -231,7 +231,7 @@ Context create_default_context() {
           //.weights_global_threshold = std::numeric_limits<size_t>::max(),
           .weights_global_threshold = 200,
           //.weights_handle_threshold = 200,
-          .weights_handle_threshold = 1,
+          .weights_handle_threshold = 100,
           .lock_then_retry = true,
           .indirection = true,
           .dynamic_threshold = true,

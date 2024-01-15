@@ -813,7 +813,11 @@ private:
 
   // terminate label queue
   bool terminate_queue() {
-    return _queue.terminate(get_message_handler());
+    do {
+      _queue.reactivate();
+      _queue.poll(get_message_handler());
+    } while (!_queue.terminate(get_message_handler()));
+    return true;
   }
 
   /**
@@ -878,12 +882,16 @@ private:
     return _w_queue.poll(get_weights_message_handler(graph));
   }
 
-  // terminate weights queue; need to make changes
+  // terminate weights queue; need to make changes; while-terminate-loop
   bool terminate_weights_queue(const DistributedGraph &graph) {
     if (!should_sync_cluster_weights()) {
       return false;
     }
-    return _w_queue.terminate(get_weights_message_handler(graph));
+    do {
+      _w_queue.reactivate();
+      _w_queue.poll(get_weights_message_handler(graph));
+    } while(!_w_queue.terminate(get_weights_message_handler(graph)));
+    return true;
   }
 
   void reactivate_weights_queue() {
