@@ -435,6 +435,7 @@ public:
           label_msg_counter = 0;
 
           // handle received label messages
+          LOG << "handle messages";
           handle_messages();
           LOG << "handled messages";
         }
@@ -828,8 +829,13 @@ private:
   }
 
   // terminate label queue
+  // TODO needs to be while-terminate-loop
   bool terminate_queue() {
-    return _queue.terminate(get_message_handler());
+    do{
+      _queue.reactivate();
+      _queue.poll(get_message_handler());
+    } while(!_queue.terminate(get_message_handler()));
+    return true;
   }
 
   /**
@@ -869,10 +875,12 @@ private:
             // if cluster is now too heavy, send cluster-lock
             if (cluster_weight(cluster) >= _max_cluster_weight) {
               _w_queue.post_message({ .flag = 2, .clusterID = cluster, .delta = 0 }, envelope.sender);
+              _w_queue.reactivate();
             }
           } else {
             // case: cluster is not owned -> need to redirect
             _w_queue.post_message(std::move(envelope.message), envelope.receiver, envelope.sender, envelope.receiver, 0);
+            _w_queue.reactivate();
             break;
           }
         } else if (flag == 2) {
@@ -899,7 +907,13 @@ private:
     if (!should_sync_cluster_weights()) {
       return false;
     }
-    return _w_queue.terminate(get_weights_message_handler(graph));
+    bool terminated = false;
+    do {
+      _w_queue.reactivate();
+      _w_queue.poll(get_weights_message_handler(graph));
+    } while(!_w_queue.terminate(get_weights_message_handler(graph)));
+    terminated = true;
+    return terminated;
   }
 
   void reactivate_weights_queue() {
