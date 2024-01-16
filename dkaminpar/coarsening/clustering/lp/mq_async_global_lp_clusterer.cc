@@ -410,7 +410,7 @@ public:
       std::size_t label_msg_counter = 0;
       std::size_t weights_msg_counter = 0;
       for (NodeID u = 0; u < graph.n(); ++u) {
-        LOG << "current step: " << iteration << "." << ++step;
+        //LOG << "current step: " << iteration << "." << ++step;
         local_num_moved_nodes += process_node(u);
         // TODO
         // seprarate weights and message handling times
@@ -421,11 +421,11 @@ public:
           
           // posting weights messages here 
           handle_cluster_weights();
-          LOG << "posted weights messages";
+          //LOG << "posted weights messages";
           
           // handle received messages
           handle_weights_messages(*_graph);
-          LOG << "handled weights messages";
+          //LOG << "handled weights messages";
         }
         // if should handle messages now: handle messages
         if (label_msg_counter < _ctx.msg_q_context.message_handle_threshold) {
@@ -435,9 +435,9 @@ public:
           label_msg_counter = 0;
 
           // handle received label messages
-          LOG << "handle messages";
+          //LOG << "handle messages";
           handle_messages();
-          LOG << "handled messages";
+          //LOG << "handled messages";
         }
       }
       LOG << "after message handling";
@@ -457,7 +457,8 @@ public:
       LOG << "handle cluster weights";
       handle_cluster_weights();
       LOG << "terminate queue";
-      terminate_queue();
+      bool terminated = terminate_queue();
+      LOG << "terminated: " << terminated;
       LOG << "terminate weight queue";
       terminate_weights_queue(graph);
       LOG << "reacivate queues";
@@ -832,6 +833,7 @@ private:
   // TODO needs to be while-terminate-loop
   bool terminate_queue() {
     do{
+      LOG << "while-terminate-loop";
       _queue.reactivate();
       _queue.poll(get_message_handler());
     } while(!_queue.terminate(get_message_handler()));
