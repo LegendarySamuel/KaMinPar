@@ -411,20 +411,24 @@ public:
 
       // asynchronic iteration body
       std::size_t label_msg_counter = 0;
+      std::size_t weights_posting_counter = 0;
       std::size_t weights_msg_counter = 0;
       for (NodeID u = 0; u < graph.n(); ++u) {
         //LOG << "current step: " << iteration << "." << ++step;
-        local_num_moved_nodes += process_node(u);
+        local_num_moved_nodes += process_node(u, weights_posting_counter);
         // TODO
+        if (weights_posting_counter > _ctx.msg_q_context.weights_global_threshold) {
+          weights_posting_counter = 0;
+          
+          // posting weights messages here 
+          handle_cluster_weights();
+          //LOG << "posted weights messages";
+        }
         // seprarate weights and message handling times
         if (weights_msg_counter < _ctx.msg_q_context.weights_handle_threshold) {
           ++weights_msg_counter;
         } else {
           weights_msg_counter = 0;
-          
-          // posting weights messages here 
-          handle_cluster_weights();
-          //LOG << "posted weights messages";
           
           // handle received messages
           handle_weights_messages(*_graph);
@@ -734,7 +738,7 @@ private:
   /**
    * label propagation for one node
   */
-  NodeID process_node(const NodeID u) {
+  NodeID process_node(const NodeID u, size_t &weights_posting_counter) {
     START_TIMER("Node iteration");
     // find cluster to move node to
     const NodeID local_num_moved_nodes = perform_iteration_for_node(u);
@@ -763,7 +767,7 @@ private:
       }
     }
 
-    add_weight_changes(u);
+    add_weight_changes(u, weights_posting_counter);
 
     return local_num_moved_nodes;
   }
@@ -771,7 +775,7 @@ private:
   /**
    * this aggregates the weight changes due to the move of node u
   */
-  void add_weight_changes(const NodeID u) {
+  void add_weight_changes(const NodeID u, size_t &weights_posting_counter) {
     
     if (!should_sync_cluster_weights() || !_ctx.msg_q_context.lock_then_retry) {
       return;
@@ -785,10 +789,12 @@ private:
 
       if (!_graph->is_owned_global_node(old_label)) {
         _weight_deltas[old_label] -= weight;
+        ++weights_posting_counter;
       }
 
       if (!_graph->is_owned_global_node(new_label)) {
         _weight_deltas[new_label] += weight;
+        ++weights_posting_counter;
       }
     }
 
@@ -950,6 +956,7 @@ private:
         // TODO could add indirection here
         _w_queue.post_message({ .flag = 1, .clusterID = gcluster, .delta = weight }, owner);
     }
+    _w_queue.flush_all_buffers();
 
     // clearing temporary weight delta map
     _weight_deltas.clear_no_resize();
