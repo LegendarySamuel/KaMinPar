@@ -318,17 +318,20 @@ public:
     int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
     size_t l_threshold;
     NodeID num_nodes = _graph->n();
-    if (num_nodes % num_chunks == 0) {
-      l_threshold = num_nodes / num_chunks;
+    NodeID total_num_nodes = _graph->total_n();
+    NodeID diff = total_num_nodes - num_nodes;
+    if (diff % num_chunks == 0) {
+      l_threshold = diff / num_chunks;
     } else {
-      l_threshold = (num_nodes / num_chunks) + 1;
+      l_threshold = (diff / num_chunks) + 1;
     }
     int size = mpi::get_comm_size(_graph->communicator());
     /*size_t g_threshold = size * l_threshold / 2;*/
     size_t g_threshold = l_threshold / 2 + l_threshold % 2;
     LOG << "local_num_nodes = " << num_nodes;
-    size_t default_size = 80000;
-    return std::min(g_threshold, default_size);
+    //size_t default_size = 80000;
+    //return std::min(g_threshold, default_size);
+    return g_threshold;
   }
 
   /**
@@ -835,7 +838,9 @@ private:
     do{
       LOG << "while-terminate-loop";
       _queue.reactivate();
+      LOG << "reactivated";
       _queue.poll(get_message_handler());
+      LOG << "polled";
     } while(!_queue.terminate(get_message_handler()));
     return true;
   }
