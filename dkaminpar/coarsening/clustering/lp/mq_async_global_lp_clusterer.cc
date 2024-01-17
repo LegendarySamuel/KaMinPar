@@ -227,6 +227,7 @@ public:
         _c_ctx(ctx.coarsening),
         _changed_label(ctx.partition.graph->n),
         _unowned_clusters_local_weight(ctx.partition.graph->total_n - ctx.partition.graph->n),
+        _unowned_clusters_local_weight_per_iteration(ctx.partition.graph->total_n - ctx.partition.graph->n),
         _global_locked_clusters(ctx.partition.graph->total_n - ctx.partition.graph->n),
         _local_cluster_weights(ctx.partition.graph->n),
         _passive_high_degree_threshold(_c_ctx.global_lp.passive_high_degree_threshold) {
@@ -263,9 +264,12 @@ public:
     if ( !map_keys_set) {
       _unowned_clusters_local_weight.set_empty_key(std::numeric_limits<ClusterID>::max());
       _unowned_clusters_local_weight.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
+      _unowned_clusters_local_weight_per_iteration.set_empty_key(std::numeric_limits<ClusterID>::max());
+      _unowned_clusters_local_weight_per_iteration.set_deleted_key(std::numeric_limits<ClusterID>::max() - 1);
       map_keys_set = 1;
     }
     _unowned_clusters_local_weight.clear_no_resize();
+    _unowned_clusters_local_weight_per_iteration.clear_no_resize();
 
     // TODO
     if (should_sync_cluster_weights() && _ctx.msg_q_context.lock_then_retry && !weight_map_keys_set) {
@@ -467,6 +471,8 @@ public:
       _graph->pfor_nodes(0, graph.n(), [&](const NodeID lnode) {
         _changed_label[lnode] = kInvalidGlobalNodeID;
       });
+
+      _unowned_clusters_local_weight_per_iteration.clear_no_resize();
     }
     // terminate queues
     terminate_queue();
@@ -536,7 +542,9 @@ public:
       KASSERT(lcluster < _graph->total_n());
       const auto gcluster = _graph->local_to_global_node(static_cast<NodeID>(lcluster));
       auto &handle = _unowned_clusters_local_weight;
+      auto &handle2 = _unowned_clusters_local_weight_per_iteration;
       [[maybe_unused]] const auto [it, success] = handle.insert(std::make_pair(gcluster, weight));
+      handle2.insert(std::make_pair(gcluster, 0));
       KASSERT(success, "Cluster already initialized: " << gcluster + 1);
     }
   }
@@ -567,6 +575,7 @@ public:
     }
 
     auto &handle = _unowned_clusters_local_weight;
+    auto &handle2 = _unowned_clusters_local_weight_per_iteration;
 
     if (_graph->is_owned_global_node(old_gcluster)) {
       const NodeID old_lcluster = _graph->global_to_local_node(old_gcluster);
@@ -574,6 +583,7 @@ public:
     } else {
       // Otherwise, move node to new cluster
       handle[old_gcluster] -= weight_delta;
+      handle2[old_gcluster] -= weight_delta;
     }
 
     if (_graph->is_owned_global_node(new_gcluster)) {
@@ -581,6 +591,7 @@ public:
       __atomic_fetch_add(&_local_cluster_weights[new_lcluster], weight_delta, __ATOMIC_RELAXED);
     } else {
       handle[new_gcluster] += weight_delta;
+      handle2[new_gcluster] += weight_delta;
     }
 
     return true;
@@ -594,12 +605,15 @@ public:
       __atomic_fetch_add(&_local_cluster_weights[lcluster], delta, __ATOMIC_RELAXED);
     } else {
       auto &handle = _unowned_clusters_local_weight;
+      auto &handle2 = _unowned_clusters_local_weight_per_iteration;
 
       auto it = handle.find(gcluster);
       if (it!= handle.end()) {
         it->second += delta;
+        handle2[gcluster] += delta;
       } else {
         handle.insert(std::make_pair(gcluster, delta));
+        handle2.insert(std::make_pair(gcluster, delta));
       }
     }
   }
@@ -742,6 +756,9 @@ private:
         }
         LabelMessage message = { .owner_lnode = u, .new_gcluster = (cluster(u)) };
         _queue.post_message(message, pe);
+        if (is_cluster_locked(*_graph, cluster(u))) {
+          _w_queue.post_message({ .flag = 2, .clusterID = cluster(u), .delta = 0 }, pe);
+        }
         added_for_pe[pe] = 1;
       }
     }
@@ -984,8 +1001,8 @@ private:
     START_TIMER("Create Messages");
     for (const auto& element : _global_locked_clusters) {
       PEID owner = _graph->find_owner_of_global_node(element);
-      if (_unowned_clusters_local_weight.find(element) != _unowned_clusters_local_weight.end()) {
-        out_msgs[owner].push_back({ .cluster = element, .delta = _unowned_clusters_local_weight.find(element)->second });
+      if (_unowned_clusters_local_weight_per_iteration.find(element) != _unowned_clusters_local_weight_per_iteration.end()) {
+        out_msgs[owner].push_back({ .cluster = element, .delta = _unowned_clusters_local_weight_per_iteration.find(element)->second });
       }
     }
     STOP_TIMER();
@@ -1256,8 +1273,11 @@ private:
   MessageQueue _queue;
 
   // used to track the total local weight of unowned clusters (key, value) = (clusterID, localDelta),
-  // that was added during the current iteration
   google::dense_hash_map<ClusterID, GlobalNodeWeight> _unowned_clusters_local_weight{};
+
+  // used to track the total local weight of unowned clusters (key, value) = (clusterID, localDelta),
+  // added during an iteration
+  google::dense_hash_map<ClusterID, GlobalNodeWeight> _unowned_clusters_local_weight_per_iteration{};
 
   // whether there was a violation to the weight constraint during the iteration
   bool _violation = false;
