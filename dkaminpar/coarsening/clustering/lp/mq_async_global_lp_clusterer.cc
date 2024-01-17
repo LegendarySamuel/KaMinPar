@@ -785,7 +785,7 @@ private:
         }
         LabelMessage message = { .owner_lnode = u, .new_gcluster = (cluster(u)) };
         _queue.post_message(message, pe);
-        if (is_cluster_locked(*_graph, cluster(u))) {
+        if (is_cluster_locked(*_graph, cluster(u)) && _graph->find_owner_of_global_node(cluster(u)) != pe) {
           _w_queue.post_message({ .flag = 2, .clusterID = cluster(u), .delta = 0 }, pe);
         }
         added_for_pe[pe] = 1;
