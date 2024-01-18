@@ -227,11 +227,11 @@ Context create_default_context() {
       },
       .msg_q_context = { // TODO
           .global_threshold = std::numeric_limits<size_t>::max(),
-          .message_handle_threshold = 200,
+          .message_handle_threshold = 1,
           //.weights_global_threshold = std::numeric_limits<size_t>::max(),
           .weights_global_threshold = 200,
           //.weights_handle_threshold = 200,
-          .weights_handle_threshold = 200,
+          .weights_handle_threshold = 1,
           .lock_then_retry = true,
           .indirection = true,
           .dynamic_threshold = true,

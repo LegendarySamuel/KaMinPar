@@ -468,6 +468,7 @@ public:
       LOG << "handle cluster weights";
       handle_cluster_weights();
       LOG << "terminate queue";
+      std::cout << "terminate rank: " << mpi::get_comm_rank(_graph->communicator()) << std::endl;
       bool terminated = terminate_queue();
       LOG << "terminated: " << terminated;
       LOG << "terminate weight queue";
@@ -867,10 +868,13 @@ private:
   // TODO needs to be while-terminate-loop
   bool terminate_queue() {
     do{
+      std::cout << "terminate reactivate: " << mpi::get_comm_rank(_graph->communicator()) << std::endl;
       LOG << "while-terminate-loop";
       _queue.reactivate();
       LOG << "reactivated";
+      std::cout << "terminate poll: " << mpi::get_comm_rank(_graph->communicator()) << std::endl;
       _queue.poll(get_message_handler());
+      std::cout << "terminate polled: " << mpi::get_comm_rank(_graph->communicator()) << std::endl;
       LOG << "polled";
     } while(!_queue.terminate(get_message_handler()));
     return true;
