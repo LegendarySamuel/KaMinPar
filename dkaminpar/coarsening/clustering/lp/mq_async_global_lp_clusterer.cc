@@ -441,6 +441,10 @@ public:
           handle_messages();
         }
       }
+      // poll both queues in case there are more messages
+      handle_weights_messages(*_graph);
+      handle_messages();
+      
       mpi::barrier(_graph->communicator());
       const GlobalNodeID global_num_moved_nodes = 
         mpi::allreduce(local_num_moved_nodes, MPI_SUM, _graph->communicator());
