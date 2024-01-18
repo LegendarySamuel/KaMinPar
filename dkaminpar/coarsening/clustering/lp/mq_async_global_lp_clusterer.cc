@@ -451,6 +451,10 @@ public:
           //LOG << "handled messages";
         }
       }
+      // poll both queues in case there are more messages
+      handle_weights_messages(*_graph);
+      handle_messages();
+      
       LOG << "after message handling";
       mpi::barrier(_graph->communicator());
       const GlobalNodeID global_num_moved_nodes = 
