@@ -135,6 +135,7 @@ public:
     const int num_chunks = _c_ctx.global_lp.compute_num_chunks(_ctx.parallel);
 
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
+      auto start_time = std::chrono::high_resolution_clock::now();
       GlobalNodeID global_num_moved_nodes = 0;
       for (int chunk = 0; chunk < num_chunks; ++chunk) {
         const auto [from, to] = math::compute_local_range<NodeID>(_graph->n(), num_chunks, chunk);
@@ -143,6 +144,9 @@ public:
       if (global_num_moved_nodes == 0) {
         break;
       }
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double> duration = end_time - start_time;
+      LOG << "Iteration " << iteration << ": " << duration.count() << " s";
     }
 
     START_TIMER("Cut Computation");

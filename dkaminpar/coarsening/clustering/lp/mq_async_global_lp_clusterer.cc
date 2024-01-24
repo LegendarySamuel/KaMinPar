@@ -322,10 +322,19 @@ public:
     int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
     size_t l_threshold;
     NodeID num_nodes = _graph->n();
-    if (num_nodes % num_chunks == 0) {
-      l_threshold = num_nodes / num_chunks;
+    NodeID num_ghosts = _graph->total_n() - _graph->n();
+    if (num_nodes > num_ghosts) {
+      if (num_nodes % num_chunks == 0) {
+        l_threshold = num_nodes / num_chunks;
+      } else {
+        l_threshold = (num_nodes / num_chunks) + 1;
+      }
     } else {
-      l_threshold = (num_nodes / num_chunks) + 1;
+      if (num_ghosts % num_chunks == 0) {
+        l_threshold = num_ghosts / num_chunks;
+      } else {
+        l_threshold = (num_ghosts / num_chunks) + 1;
+      }
     }
     int size = mpi::get_comm_size(_graph->communicator());
     /*size_t g_threshold = size * l_threshold / 2;*/
@@ -350,7 +359,7 @@ public:
     // now half of original value
     if (_ctx.msg_q_context.dynamic_threshold) {
       auto g_threshold = compute_label_MQ_buffer_size();
-      _w_queue.global_threshold(g_threshold / 2);
+      _w_queue.global_threshold(g_threshold);
     } else {
       _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
     }
@@ -405,6 +414,7 @@ public:
 
     int step = 0;
     for (int iteration = 0; iteration < _max_num_iterations; ++iteration) {
+      auto start_time = std::chrono::high_resolution_clock::now();
 
       NodeID local_num_moved_nodes = 0;
 
@@ -477,6 +487,9 @@ public:
       });
 
       _unowned_clusters_local_weight_per_iteration.clear_no_resize();
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double> duration = end_time - start_time;
+      LOG << "Iteration " << iteration << ": " << duration.count() << " s";
     }
     // terminate queues
     terminate_queue();
