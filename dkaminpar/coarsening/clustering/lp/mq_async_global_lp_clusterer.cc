@@ -345,6 +345,35 @@ public:
   }
 
   /**
+   * Compute the label MQ buffer size dynamically
+  */
+  size_t compute_weight_MQ_buffer_size() {
+    int num_chunks = _ctx.coarsening.global_lp.compute_num_chunks(_ctx.parallel);
+    size_t l_threshold;
+    NodeID num_nodes = _graph->n();
+    NodeID num_ghosts = _graph->total_n() - _graph->n();
+    if (num_nodes > num_ghosts) {
+      if (num_nodes % num_chunks == 0) {
+        l_threshold = num_nodes / num_chunks;
+      } else {
+        l_threshold = (num_nodes / num_chunks) + 1;
+      }
+    } else {
+      if (num_ghosts % num_chunks == 0) {
+        l_threshold = num_ghosts / num_chunks;
+      } else {
+        l_threshold = (num_ghosts / num_chunks) + 1;
+      }
+    }
+    int size = mpi::get_comm_size(_graph->communicator());
+    /*size_t g_threshold = size * l_threshold / 2;*/
+    size_t g_threshold = l_threshold / 8 + l_threshold % 8;
+    LOG << "local_num_nodes = " << num_nodes;
+    size_t default_size = 80000;
+    return std::min(g_threshold, default_size);
+  }
+
+  /**
    *  Weights Message Queue sending WeightsMessage (cluster, weight_delta)
   */
   void make_weights_message_queue() {
@@ -358,8 +387,9 @@ public:
     // dynamically calculated threshold sizes (similar to chunksize)
     // now half of original value
     if (_ctx.msg_q_context.dynamic_threshold) {
-      auto g_threshold = compute_label_MQ_buffer_size();
+      auto g_threshold = compute_weight_MQ_buffer_size();
       _w_queue.global_threshold(g_threshold);
+      LOG << "Global Label MQ Threshold: " << g_threshold;
     } else {
       _w_queue.global_threshold(_ctx.msg_q_context.weights_global_threshold);
     }
