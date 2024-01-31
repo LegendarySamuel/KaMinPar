@@ -98,10 +98,18 @@ void print_input_summary(
   double min_degree = std::numeric_limits<double>::max();
   double total_degree = 0;
   double avg_degree = 0.0;
+  double small_degree = std::numeric_limits<double>::max();
+  int num_isolated = 0;
   for (NodeID u : graph.nodes()) {
     double degree = graph.degree(u);
+    if (degree == 0) {
+      ++num_isolated;
+    }
     if (degree < min_degree) {
       min_degree = degree;
+    }
+    if (degree > 0 && degree < small_degree) {
+      small_degree = degree;
     }
     if (degree > max_degree) {
       max_degree = degree;
@@ -112,10 +120,14 @@ void print_input_summary(
   avg_degree = global_total_degree / graph.global_n();
   double global_max_degree = mpi::allreduce(max_degree, MPI_MAX, graph.communicator());
   double global_min_degree = mpi::allreduce(min_degree, MPI_MIN, graph.communicator());
+  double global_small_degree = mpi::allreduce(small_degree, MPI_MIN, graph.communicator());
+  double global_num_isolated = mpi::allreduce(num_isolated, MPI_SUM, graph.communicator());
   if (root) {
     LOG << "min_degree = " << global_min_degree;
     LOG << "avg_degree = " << avg_degree;
     LOG << "max_degree = " << global_max_degree;
+    LOG << "min degree > 0 = " << global_small_degree;
+    LOG << "num_isolated = " << global_num_isolated;
   }
 
   // Output
